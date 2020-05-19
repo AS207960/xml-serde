@@ -130,6 +130,41 @@ impl<R: std::io::Read> Deserializer<R> {
                 xml::reader::XmlEvent::CData(s) | xml::reader::XmlEvent::Characters(s) => {
                     Ok(s)
                 }
+                xml::reader::XmlEvent::StartElement {
+                    name,
+                    attributes,
+                    namespace
+                } => {
+                    let mut output: Vec<u8> = Vec::new();
+                    let conf = xml::writer::EmitterConfig::new()
+                        .perform_indent(false)
+                        .write_document_declaration(false)
+                        .normalize_empty_elements(true)
+                        .cdata_to_characters(false)
+                        .keep_element_names_stack(true)
+                        .pad_self_closing(false);
+                    let mut writer = conf.create_writer(&mut output);
+                    writer.write(xml::writer::XmlEvent::StartElement {
+                        name: name.borrow(),
+                        attributes: attributes.iter().map(|a| a.borrow()).collect(),
+                        namespace: std::borrow::Cow::Borrowed(&namespace)
+                    }).unwrap();
+                    let depth = this.depth;
+                    loop {
+                        let event = this.next()?;
+                        if let Some(e) = event.as_writer_event() {
+                            writer.write(e).unwrap();
+                        }
+                        if this.depth == depth {
+                            break;
+                        }
+                    }
+                    writer.write(xml::writer::XmlEvent::EndElement {
+                        name: Some(name.borrow())
+                    }).unwrap();
+                    this.expect_end_element(name)?;
+                    Ok(String::from_utf8(output).unwrap())
+                },
                 _ => Err(crate::Error::ExpectedString)
             }
         })
@@ -235,7 +270,19 @@ impl<'de, 'a, R: std::io::Read> de::Deserializer<'de> for &'a mut Deserializer<R
     }
 
     fn deserialize_option<V: serde::de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
-        visitor.visit_some(self)
+        if self.is_map_value {
+            self.peek()?;
+        }
+        if let xml::reader::XmlEvent::EndElement { .. } = self.peek()? {
+            if self.unset_map_value() {
+                self.next()?;
+            }
+            self.next()?;
+            visitor.visit_none()
+        } else {
+            self.reset_peek();
+            visitor.visit_some(self)
+        }
     }
 
     fn deserialize_unit<V: serde::de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
@@ -309,7 +356,6 @@ impl<'de, 'a, R: std::io::Read> de::Deserializer<'de> for &'a mut Deserializer<R
 struct Seq<'a, R: std::io::Read> {
     de: &'a mut Deserializer<R>,
     expected_name: Option<xml::name::OwnedName>,
-    first: bool
 }
 
 impl<'a, R: std::io::Read> Seq<'a, R> {
@@ -328,8 +374,7 @@ impl<'a, R: std::io::Read> Seq<'a, R> {
         };
         Ok(Self {
             de,
-            expected_name: name,
-            first: true
+            expected_name: name
         })
     }
 }
@@ -346,18 +391,7 @@ impl<'de, 'a, R: std::io::Read> de::SeqAccess<'de> for Seq<'a, R> {
             (xml::reader::XmlEvent::EndElement { .. }, None) | (_, Some(_)) | (xml::reader::XmlEvent::EndDocument { .. }, _) => false,
             (_, None) => true,
         };
-        if self.first {
-            match self.de.peek()? {
-                xml::reader::XmlEvent::EndElement { .. } | xml::reader::XmlEvent::EndDocument { .. } => {
-                    self.de.next()?;
-                    self.de.next()?;
-                    return Ok(None)
-                },
-                _ => {}
-            }
-        }
         self.de.reset_peek();
-        self.first = false;
         if more {
             if self.expected_name.is_some() {
                 self.de.set_map_value();

@@ -30,7 +30,8 @@ pub fn to_string<T>(value: &T) -> Result<String, crate::Error>
     let mut writer = conf.create_writer(c);
     let mut serializer = Serializer;
     let val = value.serialize(&mut serializer)?;
-    format_data(&mut writer, &val)?;
+    let mut ns_stack = vec![];
+    format_data(&mut writer, &val, &mut ns_stack)?;
     Ok(String::from_utf8(writer.into_inner().into_inner()).unwrap())
 }
 
@@ -53,7 +54,7 @@ impl _SerializerData {
     }
 }
 
-fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_SerializerData) -> Result<(), crate::Error> {
+fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_SerializerData, ns_stack: &mut Vec<String>) -> Result<(), crate::Error> {
     match val {
         _SerializerData::CData(s) => {
             writer.write(xml::writer::XmlEvent::cdata(s))?
@@ -63,7 +64,7 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
         },
         _SerializerData::Seq(s) => {
             for d in s {
-                format_data(writer, &d)?;
+                format_data(writer, &d, ns_stack)?;
             }
         },
         _SerializerData::Struct {
@@ -72,7 +73,7 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
         } => {
             for (tag, d) in contents {
                 if tag == "$value" {
-                    format_data(writer, &d)?;
+                    format_data(writer, &d, ns_stack)?;
                 } else {
                     let caps = crate::NAME_RE.captures(tag).unwrap();
                     let base_name = caps.name("e").unwrap().as_str();
@@ -81,59 +82,115 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                         None => base_name.to_string()
                     };
 
-                    let attrs = match d {
-                        _SerializerData::Struct {
-                            attrs,
-                            ..
-                        } => attrs.to_owned(),
-                        _ => vec![]
-                    };
-                    let attrs = attrs.iter().map(|(attr_k, attr_v)| {
-                        let caps = crate::NAME_RE.captures(attr_k).unwrap();
-                        let base_name = caps.name("e").unwrap().as_str();
-                        let ns = caps.name("n").map(|n| n.as_str());
-                        let prefix = caps.name("p").map(|n| n.as_str());
-                        let name = xml::name::Name {
-                            local_name: base_name,
-                            namespace: ns,
-                            prefix,
-                        };
-                        (name, attr_v)
-                    }).collect::<Vec<_>>();
                     match d {
                         _SerializerData::Seq(s) => {
                             for d in s {
-                                let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
-                                if let Some(n) = caps.name("n") {
-                                    match caps.name("p") {
-                                        Some(p) => elm = elm.ns(p.as_str(), n.as_str()),
-                                        None => elm = elm.default_ns(n.as_str())
+                                let attrs = match d {
+                                    _SerializerData::Struct {
+                                        attrs,
+                                        ..
+                                    } => attrs.to_owned(),
+                                    _ => vec![]
+                                };
+                                let attrs = attrs.iter().map(|(attr_k, attr_v)| {
+                                    let caps = crate::NAME_RE.captures(attr_k).unwrap();
+                                    let base_name = caps.name("e").unwrap().as_str();
+                                    let ns = caps.name("n").map(|n| n.as_str());
+                                    let prefix = caps.name("p").map(|n| n.as_str());
+                                    let name = xml::name::Name {
+                                        local_name: base_name,
+                                        namespace: ns,
+                                        prefix,
                                     };
+                                    (name, attr_v)
+                                }).collect::<Vec<_>>();
+                                let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
+                                elm = elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
+                                let mut loc = String::new();
+                                let mut should_pop = false;
+                                if let Some(n) = caps.name("n") {
+                                    let n = n.as_str();
+                                    match caps.name("p") {
+                                        Some(p) => elm = elm.ns(p.as_str(), n),
+                                        None => elm = elm.default_ns(n)
+                                    };
+                                    if !ns_stack.iter().any(|ns| ns == n) {
+                                        let last_n = n.rsplit(":").next().unwrap();
+                                        loc.push_str(&format!("{} {}.xsd", n, last_n));
+                                        ns_stack.push(n.to_string());
+                                        elm = elm.attr(xml::name::Name {
+                                            namespace: None,
+                                            local_name: "schemaLocation",
+                                            prefix: Some("xsi")
+                                        }, &loc);
+                                        should_pop = true;
+                                    }
                                 }
                                 for (name, attr_v) in attrs.clone() {
                                     elm = elm.attr(name, attr_v);
                                 }
 
                                 writer.write(elm)?;
-                                format_data(writer, &d)?;
+                                format_data(writer, &d, ns_stack)?;
                                 writer.write(xml::writer::XmlEvent::end_element())?;
+                                if should_pop {
+                                    ns_stack.pop();
+                                }
                             }
                         },
                         d => {
-                            let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
-                            if let Some(n) = caps.name("n") {
-                                match caps.name("p") {
-                                    Some(p) => elm = elm.ns(p.as_str(), n.as_str()),
-                                    None => elm = elm.default_ns(n.as_str())
+                            let attrs = match d {
+                                _SerializerData::Struct {
+                                    attrs,
+                                    ..
+                                } => attrs.to_owned(),
+                                _ => vec![]
+                            };
+                            let attrs = attrs.iter().map(|(attr_k, attr_v)| {
+                                let caps = crate::NAME_RE.captures(attr_k).unwrap();
+                                let base_name = caps.name("e").unwrap().as_str();
+                                let ns = caps.name("n").map(|n| n.as_str());
+                                let prefix = caps.name("p").map(|n| n.as_str());
+                                let name = xml::name::Name {
+                                    local_name: base_name,
+                                    namespace: ns,
+                                    prefix,
                                 };
+                                (name, attr_v)
+                            }).collect::<Vec<_>>();
+
+                            let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
+                            elm = elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
+                            let mut loc = String::new();
+                            let mut should_pop = false;
+                            if let Some(n) = caps.name("n") {
+                                let n = n.as_str();
+                                match caps.name("p") {
+                                    Some(p) => elm = elm.ns(p.as_str(), n),
+                                    None => elm = elm.default_ns(n)
+                                };
+                                if !ns_stack.iter().any(|ns| ns == n) {
+                                    let last_n = n.rsplit(":").next().unwrap();
+                                    loc.push_str(&format!("{} {}.xsd", n, last_n));
+                                    ns_stack.push(n.to_string());
+                                    elm = elm.attr(xml::name::Name {
+                                        namespace: None,
+                                        local_name: "schemaLocation",
+                                        prefix: Some("xsi")
+                                    }, &loc);
+                                    should_pop = true;
+                                }
                             }
                             for (name, attr_v) in attrs {
                                 elm = elm.attr(name, attr_v);
                             }
 
                             writer.write(elm)?;
-                            format_data(writer, &d)?;
+                            format_data(writer, &d, ns_stack)?;
                             writer.write(xml::writer::XmlEvent::end_element())?;
+                            if should_pop {
+                                ns_stack.pop();
+                            }
                         }
                     };
                 }

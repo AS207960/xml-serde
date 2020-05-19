@@ -22,6 +22,7 @@ lazy_static! {
 
 #[cfg(test)]
 mod tests {
+
     #[derive(Debug, Serialize, Deserialize)]
     pub enum EPPMessageType {
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}hello", skip_deserializing)]
@@ -116,13 +117,19 @@ mod tests {
 //        #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}result")]
 //        pub results: Vec<EPPResult>,
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}extension", default)]
-        pub extension: Option<Vec<EPPResponseExtensionType>>,
+        pub extension: Option<EPPResponseExtension>,
 //        #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}msgQ")]
 //        pub message_queue: Option<EPPMessageQueue>,
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}resData")]
         pub data: Option<EPPResultData>,
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}trID")]
         pub transaction_id: EPPTransactionIdentifier,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct EPPResponseExtension {
+        #[serde(rename = "$value", default)]
+        value: Vec<EPPResponseExtensionType>
     }
 
     #[derive(Debug, Deserialize)]
@@ -140,7 +147,7 @@ mod tests {
     #[derive(Debug, Deserialize)]
     pub enum EPPResultDataValue {
         #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}infData")]
-        EPPDomainInfoResult(Box<EPPDomainInfoData>),
+        EPPContactInfoResult(Box<EPPDomainInfoData>),
     }
 
     #[derive(Debug, Deserialize)]
@@ -155,16 +162,16 @@ mod tests {
     pub struct EPPDomainInfoData {
         #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}name")]
         pub name: String,
-        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}roid")]
-        pub registry_id: String,
-//        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}status", default)]
-//        pub statuses: Vec<EPPDomainStatus>,
+        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}roid", default)]
+        pub registry_id: Option<String>,
+        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}status", default)]
+        pub statuses: Vec<EPPDomainStatus>,
         #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}registrant")]
         pub registrant: String,
-//        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}contact", default)]
-//        pub contacts: Vec<EPPDomainInfoContact>,
-        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}ns")]
-        pub nameservers: EPPDomainInfoNameservers,
+        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}contact", default)]
+        pub contacts: Vec<EPPDomainInfoContact>,
+        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}ns", default)]
+        pub nameservers: Option<EPPDomainInfoNameservers>,
         #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}host", default)]
         pub hosts: Vec<String>,
         #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}clID")]
@@ -197,8 +204,66 @@ mod tests {
 //        default
 //        )]
 //        pub last_transfer_date: Option<DateTime<Utc>>,
-//        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}authInfo")]
-//        pub auth_info: Option<EPPDomainAuthInfo>,
+        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}authInfo")]
+        pub auth_info: Option<EPPDomainAuthInfo>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct EPPDomainStatus {
+        #[serde(rename = "$attr:s")]
+        pub status: EPPDomainStatusType,
+        #[serde(rename = "$value")]
+        pub message: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
+    pub enum EPPDomainStatusType {
+        #[serde(rename = "clientDeleteProhibited")]
+        ClientDeleteProhibited,
+        #[serde(rename = "clientHold")]
+        ClientHold,
+        #[serde(rename = "clientRenewProhibited")]
+        ClientRenewProhibited,
+        #[serde(rename = "clientTransferProhibited")]
+        ClientTransferProhibited,
+        #[serde(rename = "clientUpdateProhibited")]
+        ClientUpdateProhibited,
+        #[serde(rename = "inactive")]
+        Inactive,
+        #[serde(rename = "ok")]
+        Ok,
+        #[serde(rename = "Granted")]
+        Granted,
+        #[serde(rename = "pendingCreate")]
+        PendingCreate,
+        #[serde(rename = "pendingDelete")]
+        PendingDelete,
+        #[serde(rename = "Terminated")]
+        Terminated,
+        #[serde(rename = "pendingRenew")]
+        PendingRenew,
+        #[serde(rename = "pendingTransfer")]
+        PendingTransfer,
+        #[serde(rename = "pendingUpdate")]
+        PendingUpdate,
+        #[serde(rename = "serverDeleteProhibited")]
+        ServerDeleteProhibited,
+        #[serde(rename = "serverHold")]
+        ServerHold,
+        #[serde(rename = "serverRenewProhibited")]
+        ServerRenewProhibited,
+        #[serde(rename = "serverTransferProhibited")]
+        ServerTransferProhibited,
+        #[serde(rename = "serverUpdateProhibited")]
+        ServerUpdateProhibited,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct EPPDomainInfoContact {
+        #[serde(rename = "$attr:type")]
+        pub contact_type: String,
+        #[serde(rename = "$value")]
+        pub contact_id: String,
     }
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -209,14 +274,14 @@ mod tests {
 
     #[derive(Debug, Deserialize, Serialize)]
     pub enum EPPDomainInfoNameserver {
-        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}hostObj")]
+        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}domain:hostObj")]
         HostOnly(String),
-        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}hostAttr")]
+        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}domain:hostAttr")]
         HostAndAddress {
-            #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}hostName")]
+            #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}domain:hostName")]
             host: String,
-            #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}hostAddr")]
-            address: EPPDomainInfoNameserverAddress,
+            #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}domain:hostAddr", default)]
+            addresses: Vec<EPPDomainInfoNameserverAddress>,
         },
     }
 
@@ -242,42 +307,64 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct EPPDomainAuthInfo {
+        #[serde(rename = "{urn:ietf:params:xml:ns:domain-1.0}domain:pw", default)]
+        pub password: Option<String>,
+    }
+
     #[test]
     fn encode() {
         pretty_env_logger::init();
 
         let msg = r#"
-<epp xmlns="urn:ietf:params:xml:ns:epp-1.0"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="http://www.nominet.org.uk/epp/xml/epp-1.0 epp-1.0.xsd">
+<?xml version="1.0" encoding="utf-8"?>
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
   <response>
     <result code="1000">
       <msg>Command completed successfully</msg>
     </result>
     <resData>
-      <domain:infData
-        xmlns:domain="urn:ietf:params:xml:ns:domain-1.0"
-        xsi:schemaLocation="urn:ietf:params:xml:ns:domain-1.0 domain-1.0.xsd">
-        <domain:name>adriana-as207960.co.uk</domain:name>
-        <domain:roid>75798252-UK</domain:roid>
-        <domain:registrant>XUH5A8W33VVNZH2Q</domain:registrant>
+      <domain:infData xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">
+        <domain:name>haccvoc.de</domain:name>
+        <domain:roid>17828397619534_DOMAIN-KEYSYS</domain:roid>
+        <domain:status s="ok"/>
+        <domain:registrant>P-GGS4362</domain:registrant>
+        <domain:contact type="admin">P-RVS7962</domain:contact>
+        <domain:contact type="tech">P-GGS4362</domain:contact>
+        <domain:contact type="billing">P-GGS4362</domain:contact>
         <domain:ns>
-          <domain:hostObj>ns1.adriana-as207960.co.uk.</domain:hostObj>
+          <domain:hostObj>NS1.AS207960.NET</domain:hostObj>
+          <domain:hostObj>NS2.AS207960.NET</domain:hostObj>
         </domain:ns>
-        <domain:host>ns1.adriana-as207960.co.uk.</domain:host>
-        <domain:clID>AS207960</domain:clID>
-        <domain:crID>AS207960</domain:crID>
-        <domain:crDate>2019-04-23T20:00:08</domain:crDate>
-        <domain:exDate>2021-04-22T20:00:08</domain:exDate>
+        <domain:clID>as207960</domain:clID>
+        <domain:crID>EXTERNAL</domain:crID>
+        <domain:crDate>2020-05-14T14:55:50.0Z</domain:crDate>
+        <domain:upID>as207960</domain:upID>
+        <domain:upDate>2020-05-14T17:19:42.0Z</domain:upDate>
+        <domain:exDate>2021-05-14T14:55:50.0Z</domain:exDate>
+        <domain:trDate>2020-05-14T14:55:50.0Z</domain:trDate>
+        <domain:authInfo>
+          <domain:pw/>
+        </domain:authInfo>
       </domain:infData>
     </resData>
-    <extension/>
+    <extension>
+      <secDNS:infData xmlns:secDNS="urn:ietf:params:xml:ns:secDNS-1.1">
+        <secDNS:keyData>
+          <secDNS:flags>257</secDNS:flags>
+          <secDNS:protocol>3</secDNS:protocol>
+          <secDNS:alg>13</secDNS:alg>
+          <secDNS:pubKey>UIh8VQuVXbUQwCjV4d+ptxKCvtbI6XcAdf9qnL1f21663JotyeXU/sNF6GUz5jutm1nmcrRbKS8DDGRz0fzoHA==</secDNS:pubKey>
+        </secDNS:keyData>
+      </secDNS:infData>
+    </extension>
     <trID>
-      <clTRID>440dcdc6-e910-4139-af9e-104c64c97bfb</clTRID>
-      <svTRID>15346692879</svTRID>
+      <clTRID>7d6a6b86-674d-4906-a87f-54c187a12651</clTRID>
+      <svTRID>4fc529b1-9e22-4269-a33c-f7957c80460d</svTRID>
     </trID>
   </response>
-</epp>"#;
+</epp> "#;
         println!("{:?}", super::de::from_str::<EPPMessage>(&msg).unwrap());
         let msg = EPPMessage {
             message: EPPMessageType::Command(EPPCommand {
