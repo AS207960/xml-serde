@@ -172,9 +172,9 @@ impl<R: std::io::Read> Deserializer<R> {
 
     fn parse_bool(&mut self) -> crate::Result<bool> {
         let s = self.parse_string()?;
-        match s.as_str() {
-            "true" | "1" => Ok(true),
-            "false" | "0" => Ok(false),
+        match s.to_lowercase().as_str() {
+            "true" | "1" | "y" => Ok(true),
+            "false" | "0" | "n" => Ok(false),
             _ => Err(crate::Error::ExpectedBool)
         }
     }
@@ -666,9 +666,9 @@ impl<'de> serde::de::Deserializer<'de> for AttrValueDeserializer {
     }
 
     fn deserialize_bool<V: de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
-        match self.0.as_str() {
-            "true" | "1" => visitor.visit_bool(true),
-            "false" | "0" => visitor.visit_bool(false),
+        match self.0.to_lowercase().as_str() {
+            "true" | "1" | "y" => visitor.visit_bool(true),
+            "false" | "0" | "n" => visitor.visit_bool(false),
             _ => Err(crate::Error::ExpectedBool),
         }
     }
