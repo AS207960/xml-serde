@@ -115,7 +115,7 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                                         None => elm = elm.default_ns(n)
                                     };
                                     if !ns_stack.iter().any(|ns| ns == n) {
-                                        let last_n = n.rsplit(":").next().unwrap();
+                                        let last_n = n.rsplit(':').next().unwrap();
                                         loc.push_str(&format!("{} {}.xsd", n, last_n));
                                         ns_stack.push(n.to_string());
                                         elm = elm.attr(xml::name::Name {
@@ -170,7 +170,7 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                                     None => elm = elm.default_ns(n)
                                 };
                                 if !ns_stack.iter().any(|ns| ns == n) {
-                                    let last_n = n.rsplit(":").next().unwrap();
+                                    let last_n = n.rsplit(':').next().unwrap();
                                     loc.push_str(&format!("{} {}.xsd", n, last_n));
                                     ns_stack.push(n.to_string());
                                     elm = elm.attr(xml::name::Name {
