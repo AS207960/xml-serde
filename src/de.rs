@@ -36,6 +36,7 @@ pub fn from_str<'a, T: Deserialize<'a>>(s: &'a str) -> crate::Result<T> {
 
 impl<R: std::io::Read> Deserializer<R> {
     fn set_map_value(&mut self) {
+        trace!("set_map_value()");
         self.is_map_value = true;
     }
 
@@ -270,19 +271,21 @@ impl<'de, 'a, R: std::io::Read> de::Deserializer<'de> for &'a mut Deserializer<R
     }
 
     fn deserialize_option<V: serde::de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
-        if self.is_map_value {
-            self.peek()?;
-        }
-        if let xml::reader::XmlEvent::EndElement { .. } = self.peek()? {
-            if self.unset_map_value() {
-                self.next()?;
-            }
-            self.next()?;
-            visitor.visit_none()
-        } else {
-            self.reset_peek();
-            visitor.visit_some(self)
-        }
+        trace!("deserialize_option()");
+//        if self.is_map_value {
+//            self.peek()?;
+//        }
+//        if let xml::reader::XmlEvent::EndElement { .. } = self.peek()? {
+//            if self.unset_map_value() {
+//                self.next()?;
+//            }
+//            self.next()?;
+//            visitor.visit_none()
+//        } else {
+//            self.reset_peek();
+//            visitor.visit_some(self)
+//        }
+        visitor.visit_some(self)
     }
 
     fn deserialize_unit<V: serde::de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
@@ -507,7 +510,7 @@ impl<'de, 'a, R: std::io::Read> de::MapAccess<'de> for Map<'a, R> {
     type Error = crate::Error;
 
     fn next_key_seed<K: de::DeserializeSeed<'de>>(&mut self, seed: K) -> crate::Result<Option<K::Value>> {
-        trace!("next_key_seed()");
+        trace!("next_key_seed(); attrs = {:?}", self.attrs);
         match self.attrs.pop() {
             Some(xml::attribute::OwnedAttribute { name, value }) => {
                 let name = self.fields.match_attr(&name);
@@ -535,7 +538,7 @@ impl<'de, 'a, R: std::io::Read> de::MapAccess<'de> for Map<'a, R> {
     }
 
     fn next_value_seed<V: de::DeserializeSeed<'de>>(&mut self, seed: V) -> crate::Result<V::Value> {
-        trace!("next_value_seed()");
+        trace!("next_value_seed(); next_value = {:?}", self.next_value);
         match self.next_value.take() {
             Some(val) => seed.deserialize(AttrValueDeserializer(val)),
             None => {
