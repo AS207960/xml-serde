@@ -272,20 +272,24 @@ impl<'de, 'a, R: std::io::Read> de::Deserializer<'de> for &'a mut Deserializer<R
 
     fn deserialize_option<V: serde::de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
         trace!("deserialize_option()");
-//        if self.is_map_value {
-//            self.peek()?;
-//        }
-//        if let xml::reader::XmlEvent::EndElement { .. } = self.peek()? {
-//            if self.unset_map_value() {
-//                self.next()?;
-//            }
-//            self.next()?;
-//            visitor.visit_none()
-//        } else {
-//            self.reset_peek();
-//            visitor.visit_some(self)
-//        }
-        visitor.visit_some(self)
+        if self.is_map_value {
+            if let xml::reader::XmlEvent::StartElement { attributes, .. } = self.peek()? {
+                if !attributes.is_empty() {
+                    self.reset_peek();
+                    return visitor.visit_some(self);
+                }
+            }
+        }
+        if let xml::reader::XmlEvent::EndElement { .. } = self.peek()? {
+            if self.unset_map_value() {
+                self.next()?;
+            }
+            self.next()?;
+            visitor.visit_none()
+        } else {
+            self.reset_peek();
+            visitor.visit_some(self)
+        }
     }
 
     fn deserialize_unit<V: serde::de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
