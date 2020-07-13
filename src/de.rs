@@ -65,7 +65,6 @@ impl<R: std::io::Read> Deserializer<R> {
             Some(n) => n,
             None => return Err(crate::Error::ExpectedElement)
         }?;
-        trace!("next() -> {:?}", next);
         match next {
             xml::reader::XmlEvent::StartElement { .. } => {
                 self.depth += 1;
@@ -75,6 +74,7 @@ impl<R: std::io::Read> Deserializer<R> {
             }
             _ => {}
         }
+        trace!("next() -> {:?}; depth = {}", next, self.depth);
         Ok(next)
     }
 
@@ -142,7 +142,7 @@ impl<R: std::io::Read> Deserializer<R> {
                         .write_document_declaration(false)
                         .normalize_empty_elements(true)
                         .cdata_to_characters(false)
-                        .keep_element_names_stack(true)
+                        .keep_element_names_stack(false)
                         .pad_self_closing(false);
                     let mut writer = conf.create_writer(&mut output);
                     writer.write(xml::writer::XmlEvent::StartElement {
@@ -150,20 +150,21 @@ impl<R: std::io::Read> Deserializer<R> {
                         attributes: attributes.iter().map(|a| a.borrow()).collect(),
                         namespace: std::borrow::Cow::Borrowed(&namespace)
                     }).unwrap();
-                    let depth = this.depth;
+                    let depth = this.depth - 1;
                     loop {
                         let event = this.next()?;
-                        if let Some(e) = event.as_writer_event() {
-                            writer.write(e).unwrap();
-                        }
+                        trace!("{:?}; {}; {}", event, this.depth, depth);
                         if this.depth == depth {
                             break;
+                        }
+                        if let Some(e) = event.as_writer_event() {
+                            trace!("{:?}; {}; {}", event, this.depth, depth);
+                            writer.write(e).unwrap();
                         }
                     }
                     writer.write(xml::writer::XmlEvent::EndElement {
                         name: Some(name.borrow())
                     }).unwrap();
-                    this.expect_end_element(name)?;
                     Ok(String::from_utf8(output).unwrap())
                 },
                 _ => Err(crate::Error::ExpectedString)
