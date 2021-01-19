@@ -18,20 +18,24 @@ pub fn to_string<T>(value: &T) -> Result<String, crate::Error>
     where
         T: Serialize,
 {
-    let conf = xml::writer::EmitterConfig::new()
+    let mut conf = xml::writer::EmitterConfig::new()
         .perform_indent(true)
         .write_document_declaration(true)
         .normalize_empty_elements(true)
         .cdata_to_characters(true)
         .keep_element_names_stack(true)
         .pad_self_closing(false);
+    conf.perform_escaping = false;
 
     let c = std::io::Cursor::new(Vec::new());
     let mut writer = conf.create_writer(c);
     let mut serializer = Serializer;
     let val = value.serialize(&mut serializer)?;
-    let mut ns_stack = vec![];
-    format_data(&mut writer, &val, &mut ns_stack)?;
+    let mut state = _SerializerState {
+        raw_output: false,
+        ns_stack: vec![]
+    };
+    format_data(&mut writer, &val, &mut state)?;
     Ok(String::from_utf8(writer.into_inner().into_inner()).unwrap())
 }
 
@@ -54,17 +58,25 @@ impl _SerializerData {
     }
 }
 
-fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_SerializerData, ns_stack: &mut Vec<String>) -> Result<(), crate::Error> {
+struct _SerializerState {
+    raw_output: bool,
+    ns_stack: Vec<String>
+}
+
+fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_SerializerData, state: &mut _SerializerState) -> Result<(), crate::Error> {
     match val {
         _SerializerData::CData(s) => {
             writer.write(xml::writer::XmlEvent::cdata(s))?
         },
         _SerializerData::String(s) => {
-            writer.write(xml::writer::XmlEvent::characters(s))?
+            writer.write(xml::writer::XmlEvent::characters(&match state.raw_output {
+                true => s.to_string(),
+                false => xml::escape::escape_str_pcdata(s).to_string()
+            }))?
         },
         _SerializerData::Seq(s) => {
             for d in s {
-                format_data(writer, &d, ns_stack)?;
+                format_data(writer, &d, state)?;
             }
         },
         _SerializerData::Struct {
@@ -73,7 +85,12 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
         } => {
             for (tag, d) in contents {
                 if tag == "$value" {
-                    format_data(writer, &d, ns_stack)?;
+                    format_data(writer, &d, state)?;
+                } else if tag == "$valueRaw" {
+                    let old_val = state.raw_output;
+                    state.raw_output = true;
+                    format_data(writer, &d, state)?;
+                    state.raw_output = old_val;
                 } else {
                     let caps = crate::NAME_RE.captures(tag).unwrap();
                     let base_name = caps.name("e").unwrap().as_str();
@@ -114,10 +131,10 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                                         Some(p) => elm = elm.ns(p.as_str(), n),
                                         None => elm = elm.default_ns(n)
                                     };
-                                    if !ns_stack.iter().any(|ns| ns == n) {
+                                    if !state.ns_stack.iter().any(|ns| ns == n) {
                                         let last_n = n.rsplit(':').next().unwrap();
                                         loc.push_str(&format!("{} {}.xsd", n, last_n));
-                                        ns_stack.push(n.to_string());
+                                        state.ns_stack.push(n.to_string());
                                         elm = elm.attr(xml::name::Name {
                                             namespace: None,
                                             local_name: "schemaLocation",
@@ -131,10 +148,10 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                                 }
 
                                 writer.write(elm)?;
-                                format_data(writer, &d, ns_stack)?;
+                                format_data(writer, &d, state)?;
                                 writer.write(xml::writer::XmlEvent::end_element())?;
                                 if should_pop {
-                                    ns_stack.pop();
+                                    state.ns_stack.pop();
                                 }
                             }
                         },
@@ -169,10 +186,10 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                                     Some(p) => elm = elm.ns(p.as_str(), n),
                                     None => elm = elm.default_ns(n)
                                 };
-                                if !ns_stack.iter().any(|ns| ns == n) {
+                                if !state.ns_stack.iter().any(|ns| ns == n) {
                                     let last_n = n.rsplit(':').next().unwrap();
                                     loc.push_str(&format!("{} {}.xsd", n, last_n));
-                                    ns_stack.push(n.to_string());
+                                    state.ns_stack.push(n.to_string());
                                     elm = elm.attr(xml::name::Name {
                                         namespace: None,
                                         local_name: "schemaLocation",
@@ -186,10 +203,10 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                             }
 
                             writer.write(elm)?;
-                            format_data(writer, &d, ns_stack)?;
+                            format_data(writer, &d, state)?;
                             writer.write(xml::writer::XmlEvent::end_element())?;
                             if should_pop {
-                                ns_stack.pop();
+                                state.ns_stack.pop();
                             }
                         }
                     };
