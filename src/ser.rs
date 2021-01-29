@@ -66,7 +66,10 @@ struct _SerializerState {
 fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_SerializerData, state: &mut _SerializerState) -> Result<(), crate::Error> {
     match val {
         _SerializerData::CData(s) => {
-            writer.write(xml::writer::XmlEvent::cdata(s))?
+            writer.write(xml::writer::XmlEvent::cdata(&match state.raw_output {
+                true => s.to_string(),
+                false => xml::escape::escape_str_pcdata(s).to_string()
+            }))?
         },
         _SerializerData::String(s) => {
             writer.write(xml::writer::XmlEvent::characters(&match state.raw_output {
