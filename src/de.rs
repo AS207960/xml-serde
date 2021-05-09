@@ -5,8 +5,10 @@ use serde::de::IntoDeserializer;
 
 pub struct Deserializer<R: std::io::Read> {
     reader: itertools::MultiPeek<xml::reader::Events<R>>,
-    depth: i64,
+    depth: u64,
     is_map_value: bool,
+    is_greedy: bool,
+    reset_peek_offset: u64,
 }
 
 pub fn from_str<'a, T: Deserialize<'a>>(s: &'a str) -> crate::Result<T> {
@@ -22,13 +24,15 @@ pub fn from_str<'a, T: Deserialize<'a>>(s: &'a str) -> crate::Result<T> {
             standalone
         } => {
             trace!("start_document({:?}, {:?}, {:?})", version, encoding, standalone);
-        },
+        }
         _ => return Err(crate::Error::ExpectedElement)
     }
     let mut deserializer = Deserializer {
         reader: itertools::multipeek(event_reader.into_iter()),
         depth: 0,
-        is_map_value: false
+        is_map_value: false,
+        is_greedy: true,
+        reset_peek_offset: 0,
     };
     let t = T::deserialize(&mut deserializer)?;
     Ok(t)
@@ -42,6 +46,17 @@ impl<R: std::io::Read> Deserializer<R> {
 
     pub fn unset_map_value(&mut self) -> bool {
         std::mem::replace(&mut self.is_map_value, false)
+    }
+
+    fn set_not_greedy(&mut self) {
+        trace!("set_not_greedy()");
+        self.is_greedy = false;
+    }
+
+    pub fn unset_not_greedy(&mut self) -> bool {
+        trace!("unset_not_greedy()");
+        self.reset_peek_offset = 0;
+        std::mem::replace(&mut self.is_greedy, true)
     }
 
     fn peek(&mut self) -> crate::Result<&xml::reader::XmlEvent> {
@@ -58,6 +73,9 @@ impl<R: std::io::Read> Deserializer<R> {
 
     fn reset_peek(&mut self) {
         self.reader.reset_peek();
+        for _ in 0..self.reset_peek_offset {
+            self.reader.peek();
+        }
     }
 
     fn next(&mut self) -> crate::Result<xml::reader::XmlEvent> {
@@ -86,7 +104,7 @@ impl<R: std::io::Read> Deserializer<R> {
                     let result = f(self)?;
                     self.expect_end_element(name)?;
                     Ok(result)
-                },
+                }
                 _ => Err(crate::Error::ExpectedElement)
             }
         } else {
@@ -102,7 +120,7 @@ impl<R: std::io::Read> Deserializer<R> {
                     let result = f(self, attributes)?;
                     self.expect_end_element(name)?;
                     Ok(result)
-                },
+                }
                 _ => Err(crate::Error::ExpectedElement)
             }
         } else {
@@ -113,7 +131,7 @@ impl<R: std::io::Read> Deserializer<R> {
     fn expect_end_element(&mut self, old_name: xml::name::OwnedName) -> crate::Result<()> {
         trace!("expect_end_element({:?})", old_name);
         match self.next()? {
-            xml::reader::XmlEvent::EndElement {name} => {
+            xml::reader::XmlEvent::EndElement { name } => {
                 if name == old_name {
                     Ok(())
                 } else {
@@ -148,7 +166,7 @@ impl<R: std::io::Read> Deserializer<R> {
                     writer.write(xml::writer::XmlEvent::StartElement {
                         name: name.borrow(),
                         attributes: attributes.iter().map(|a| a.borrow()).collect(),
-                        namespace: std::borrow::Cow::Borrowed(&namespace)
+                        namespace: std::borrow::Cow::Borrowed(&namespace),
                     }).unwrap();
                     let depth = this.depth - 1;
                     loop {
@@ -166,7 +184,7 @@ impl<R: std::io::Read> Deserializer<R> {
                         name: Some(name.borrow())
                     }).unwrap();
                     Ok(String::from_utf8(output).unwrap())
-                },
+                }
                 _ => Err(crate::Error::ExpectedString)
             }
         })
@@ -194,6 +212,7 @@ impl<'de, 'a, R: std::io::Read> de::Deserializer<'de> for &'a mut Deserializer<R
     type Error = crate::Error;
 
     fn deserialize_any<V: serde::de::Visitor<'de>>(self, _visitor: V) -> crate::Result<V::Value> {
+        trace!("deserialize_any()");
         Err(crate::Error::Unsupported)
     }
 
@@ -264,10 +283,12 @@ impl<'de, 'a, R: std::io::Read> de::Deserializer<'de> for &'a mut Deserializer<R
     }
 
     fn deserialize_bytes<V: serde::de::Visitor<'de>>(self, _visitor: V) -> crate::Result<V::Value> {
+        trace!("deserialize_bytes()");
         Err(crate::Error::Unsupported)
     }
 
     fn deserialize_byte_buf<V: serde::de::Visitor<'de>>(self, _visitor: V) -> crate::Result<V::Value> {
+        trace!("deserialize_byte_buf()");
         Err(crate::Error::Unsupported)
     }
 
@@ -331,7 +352,7 @@ impl<'de, 'a, R: std::io::Read> de::Deserializer<'de> for &'a mut Deserializer<R
 
     fn deserialize_struct<V: serde::de::Visitor<'de>>(self, name: &'static str, fields: &'static [&'static str], visitor: V) -> crate::Result<V::Value> {
         trace!("deserialize_struct({:?}, {:?})", name, fields);
-        self.read_inner_value_attrs(|this, attrs | {
+        self.read_inner_value_attrs(|this, attrs| {
             visitor.visit_map(Map::new(this, attrs, fields))
         })
     }
@@ -350,11 +371,31 @@ impl<'de, 'a, R: std::io::Read> de::Deserializer<'de> for &'a mut Deserializer<R
 
     fn deserialize_ignored_any<V: serde::de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
         trace!("deserialize_ignored_any()");
-        let depth = self.depth;
-        loop {
-            self.next()?;
-            if self.depth == depth {
-                break;
+        if self.is_greedy {
+            let depth = self.depth;
+            loop {
+                self.next()?;
+                if self.depth == depth {
+                    break;
+                }
+            }
+        } else {
+            let mut depth = 0;
+            loop {
+                let next = self.peek()?;
+                match next {
+                    xml::reader::XmlEvent::StartElement { .. } => {
+                        depth += 1;
+                    }
+                    xml::reader::XmlEvent::EndElement { .. } => {
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+                self.reset_peek_offset += 1;
+                if depth == 0{
+                    break;
+                }
             }
         }
         visitor.visit_unit()
@@ -372,7 +413,7 @@ impl<'a, R: std::io::Read> Seq<'a, R> {
             let val = match de.peek()? {
                 xml::reader::XmlEvent::StartElement { name, .. } => {
                     Some(name.clone())
-                },
+                }
                 _ => return Err(crate::Error::ExpectedElement)
             };
             de.reset_peek();
@@ -382,7 +423,7 @@ impl<'a, R: std::io::Read> Seq<'a, R> {
         };
         Ok(Self {
             de,
-            expected_name: name
+            expected_name: name,
         })
     }
 }
@@ -395,7 +436,7 @@ impl<'de, 'a, R: std::io::Read> de::SeqAccess<'de> for Seq<'a, R> {
         let more = match (self.de.peek()?, self.expected_name.as_ref()) {
             (xml::reader::XmlEvent::StartElement { ref name, .. }, Some(expected_name)) => {
                 name == expected_name
-            },
+            }
             (xml::reader::XmlEvent::EndElement { .. }, None) | (_, Some(_)) | (xml::reader::XmlEvent::EndDocument { .. }, _) => false,
             (_, None) => true,
         };
@@ -413,14 +454,15 @@ impl<'de, 'a, R: std::io::Read> de::SeqAccess<'de> for Seq<'a, R> {
 
 struct Fields {
     fields: Vec<Field>,
-    inner_value: bool
+    inner_value: bool,
+    value_used: bool,
 }
 
 struct Field {
     namespace: Option<String>,
     local_name: String,
     name: String,
-    attr: bool
+    attr: bool,
 }
 
 impl From<&&str> for Field {
@@ -439,7 +481,7 @@ impl From<&&str> for Field {
             namespace,
             local_name: base_name,
             name: from.to_string(),
-            attr
+            attr,
         }
     }
 }
@@ -448,20 +490,22 @@ impl From<&[&str]> for Fields {
     fn from(from: &[&str]) -> Self {
         Fields {
             fields: from.iter().map(|f| f.into()).collect(),
-            inner_value: from.contains(&"$value")
+            inner_value: from.contains(&"$value"),
+            value_used: false,
         }
     }
 }
 
 impl Fields {
-    fn match_field(&self, name: &xml::name::OwnedName) -> String {
+    fn match_field(&mut self, name: &xml::name::OwnedName) -> String {
         for field in &self.fields {
             if field.local_name == name.local_name && field.namespace == name.namespace && !field.attr {
                 trace!("match_field({:?}) -> {:?}", name, field.name);
-                return field.name.clone()
+                return field.name.clone();
             }
         }
-        let name_str = if self.inner_value {
+        let name_str = if self.inner_value && !self.value_used {
+            self.value_used = true;
             "$value".to_string()
         } else {
             match &name.namespace {
@@ -496,7 +540,8 @@ struct Map<'a, R: std::io::Read> {
     attrs: Vec<xml::attribute::OwnedAttribute>,
     fields: Fields,
     next_value: Option<String>,
-    inner_value: bool
+    inner_value: bool,
+    next_is_value: bool,
 }
 
 impl<'a, R: std::io::Read> Map<'a, R> {
@@ -506,7 +551,8 @@ impl<'a, R: std::io::Read> Map<'a, R> {
             attrs,
             fields: fields.into(),
             next_value: None,
-            inner_value: true
+            inner_value: true,
+            next_is_value: false
         }
     }
 }
@@ -520,8 +566,9 @@ impl<'de, 'a, R: std::io::Read> de::MapAccess<'de> for Map<'a, R> {
             Some(xml::attribute::OwnedAttribute { name, value }) => {
                 let name = self.fields.match_attr(&name);
                 self.next_value = Some(value);
+                self.next_is_value = false;
                 seed.deserialize(name.as_str().into_deserializer()).map(Some)
-            },
+            }
             None => {
                 let val = match *self.de.peek()? {
                     xml::reader::XmlEvent::StartElement {
@@ -529,9 +576,11 @@ impl<'de, 'a, R: std::io::Read> de::MapAccess<'de> for Map<'a, R> {
                     } => {
                         let name = self.fields.match_field(name);
                         self.inner_value = name == "$value";
+                        self.next_is_value = name == "$value";
                         seed.deserialize(name.as_str().into_deserializer()).map(Some)
                     }
                     xml::reader::XmlEvent::Characters(_) | xml::reader::XmlEvent::CData(_) => {
+                        self.next_is_value = true;
                         seed.deserialize("$value".into_deserializer()).map(Some)
                     }
                     _ => Ok(None)
@@ -543,14 +592,23 @@ impl<'de, 'a, R: std::io::Read> de::MapAccess<'de> for Map<'a, R> {
     }
 
     fn next_value_seed<V: de::DeserializeSeed<'de>>(&mut self, seed: V) -> crate::Result<V::Value> {
-        trace!("next_value_seed(); next_value = {:?}", self.next_value);
+        trace!("next_value_seed(); next_value = {:?}; next_is_value = {}", self.next_value, self.next_is_value);
         match self.next_value.take() {
             Some(val) => seed.deserialize(AttrValueDeserializer(val)),
             None => {
                 if !std::mem::replace(&mut self.inner_value, false) {
                     self.de.set_map_value();
                 }
-                seed.deserialize(&mut *self.de)
+                let greedy = self.next_is_value && self.fields.fields.len() > 1;
+                if greedy {
+                    self.de.set_not_greedy();
+                }
+                let val = seed.deserialize(&mut *self.de)?;
+                if greedy {
+                    self.de.unset_not_greedy();
+                    self.de.reset_peek();
+                }
+                Ok(val)
             }
         }
     }
@@ -565,7 +623,7 @@ impl<'a, R: std::io::Read> Enum<'a, R> {
     pub fn new(de: &'a mut Deserializer<R>, fields: &[&str]) -> Self {
         Self {
             de,
-            fields: fields.into()
+            fields: fields.into(),
         }
     }
 }
@@ -574,7 +632,7 @@ impl<'de, 'a, R: std::io::Read> de::EnumAccess<'de> for Enum<'a, R> {
     type Error = crate::Error;
     type Variant = Self;
 
-    fn variant_seed<V: de::DeserializeSeed<'de>>(self, seed: V) -> crate::Result<(V::Value, Self::Variant)> {
+    fn variant_seed<V: de::DeserializeSeed<'de>>(mut self, seed: V) -> crate::Result<(V::Value, Self::Variant)> {
         trace!("variant_seed()");
         let val = match self.de.peek()? {
             xml::reader::XmlEvent::StartElement {
@@ -584,11 +642,11 @@ impl<'de, 'a, R: std::io::Read> de::EnumAccess<'de> for Enum<'a, R> {
                 let name_str: serde::de::value::StrDeserializer<crate::Error> = name_str.as_str().into_deserializer();
                 self.de.set_map_value();
                 Ok(seed.deserialize(name_str)?)
-            },
+            }
             xml::reader::XmlEvent::Characters(s) | xml::reader::XmlEvent::CData(s) => {
                 let name: serde::de::value::StrDeserializer<crate::Error> = s.as_str().into_deserializer();
                 Ok(seed.deserialize(name)?)
-            },
+            }
             _ => Err(crate::Error::ExpectedString)
         }?;
         self.de.reset_peek();
@@ -629,7 +687,7 @@ impl<'de, 'a, R: std::io::Read> de::VariantAccess<'de> for Enum<'a, R> {
     fn struct_variant<V: de::Visitor<'de>>(self, fields: &'static [&'static str], visitor: V) -> crate::Result<V::Value> {
         trace!("struct_variant({:?})", fields);
         use serde::de::Deserializer;
-       self.de.deserialize_struct("", fields, visitor)
+        self.de.deserialize_struct("", fields, visitor)
     }
 }
 
