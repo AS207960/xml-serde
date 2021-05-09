@@ -33,7 +33,7 @@ pub fn to_string<T>(value: &T) -> Result<String, crate::Error>
     let val = value.serialize(&mut serializer)?;
     let mut state = _SerializerState {
         raw_output: false,
-        ns_stack: vec![]
+        ns_stack: vec![],
     };
     format_data(&mut writer, &val, &mut state)?;
     Ok(String::from_utf8(writer.into_inner().into_inner()).unwrap())
@@ -60,7 +60,7 @@ impl _SerializerData {
 
 struct _SerializerState {
     raw_output: bool,
-    ns_stack: Vec<String>
+    ns_stack: Vec<String>,
 }
 
 fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_SerializerData, state: &mut _SerializerState) -> Result<(), crate::Error> {
@@ -70,24 +70,24 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                 true => s.to_string(),
                 false => xml::escape::escape_str_pcdata(s).to_string()
             }))?
-        },
+        }
         _SerializerData::String(s) => {
             writer.write(xml::writer::XmlEvent::characters(&match state.raw_output {
                 true => s.to_string(),
                 false => xml::escape::escape_str_pcdata(s).to_string()
             }))?
-        },
+        }
         _SerializerData::Seq(s) => {
             for d in s {
                 format_data(writer, &d, state)?;
             }
-        },
+        }
         _SerializerData::Struct {
             contents,
             ..
         } => {
             for (tag, d) in contents {
-                if tag == "$value" {
+                if tag.starts_with(&"$value") {
                     format_data(writer, &d, state)?;
                 } else if tag == "$valueRaw" {
                     let old_val = state.raw_output;
@@ -135,14 +135,18 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                                         None => elm = elm.default_ns(n)
                                     };
                                     if !state.ns_stack.iter().any(|ns| ns == n) {
-                                        let last_n = n.rsplit(':').next().unwrap();
-                                        loc.push_str(&format!("{} {}.xsd", n, last_n));
-                                        state.ns_stack.push(n.to_string());
+                                        if let Some(l) = caps.name("l") {
+                                            loc.push_str(&format!("{} {}", n, l.as_str()));
+                                        } else {
+                                            let last_n = n.rsplit(':').next().unwrap();
+                                            loc.push_str(&format!("{} {}.xsd", n, last_n));
+                                        }
                                         elm = elm.attr(xml::name::Name {
                                             namespace: None,
                                             local_name: "schemaLocation",
-                                            prefix: Some("xsi")
+                                            prefix: Some("xsi"),
                                         }, &loc);
+                                        state.ns_stack.push(n.to_string());
                                         should_pop = true;
                                     }
                                 }
@@ -157,7 +161,7 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                                     state.ns_stack.pop();
                                 }
                             }
-                        },
+                        }
                         d => {
                             let attrs = match d {
                                 _SerializerData::Struct {
@@ -190,14 +194,18 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                                     None => elm = elm.default_ns(n)
                                 };
                                 if !state.ns_stack.iter().any(|ns| ns == n) {
-                                    let last_n = n.rsplit(':').next().unwrap();
-                                    loc.push_str(&format!("{} {}.xsd", n, last_n));
-                                    state.ns_stack.push(n.to_string());
+                                    if let Some(l) = caps.name("l") {
+                                        loc.push_str(&format!("{} {}", n, l.as_str()));
+                                    } else {
+                                        let last_n = n.rsplit(':').next().unwrap();
+                                        loc.push_str(&format!("{} {}.xsd", n, last_n));
+                                    }
                                     elm = elm.attr(xml::name::Name {
                                         namespace: None,
                                         local_name: "schemaLocation",
-                                        prefix: Some("xsi")
+                                        prefix: Some("xsi"),
                                     }, &loc);
+                                    state.ns_stack.push(n.to_string());
                                     should_pop = true;
                                 }
                             }
@@ -215,7 +223,7 @@ fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_Seria
                     };
                 }
             }
-        },
+        }
     }
     Ok(())
 }
@@ -225,7 +233,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     type Error = crate::Error;
     type SerializeSeq = SeqSerializer<'a>;
     type SerializeTuple = SeqSerializer<'a>;
-    type SerializeTupleStruct = SeqSerializer<'a,>;
+    type SerializeTupleStruct = SeqSerializer<'a, >;
     type SerializeTupleVariant = SeqSerializer<'a>;
     type SerializeMap = MapSerializer<'a>;
     type SerializeStruct = StructSerializer<'a>;
@@ -340,7 +348,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         let value = value.serialize(&mut *self)?;
         Ok(_SerializerData::Struct {
             attrs: vec![],
-            contents: vec![(variant.to_string(), value)]
+            contents: vec![(variant.to_string(), value)],
         })
     }
 
@@ -540,7 +548,7 @@ impl<'a> ser::SerializeStruct for StructSerializer<'a> {
         if key.starts_with("$attr:") {
             self.attrs.push((key[6..].to_string(), val.as_str()));
         } else {
-            self.keys.push((key.to_string(),val));
+            self.keys.push((key.to_string(), val));
         }
         Ok(())
     }
@@ -572,7 +580,7 @@ impl<'a> ser::SerializeStructVariant for StructVariantSerializer<'a> {
         if key.starts_with("$attr:") {
             self.attrs.push((key[6..].to_string(), val.as_str()));
         } else {
-            self.keys.push((key.to_string(),val));
+            self.keys.push((key.to_string(), val));
         }
         Ok(())
     }
@@ -583,7 +591,7 @@ impl<'a> ser::SerializeStructVariant for StructVariantSerializer<'a> {
             contents: vec![(self.tag, _SerializerData::Struct {
                 attrs: self.attrs,
                 contents: self.keys,
-            })]
+            })],
         })
     }
 }

@@ -16,7 +16,7 @@ pub use error::{Error, Result};
 
 lazy_static! {
     static ref NAME_RE: regex::Regex = {
-        regex::Regex::new(r"^(?:\{(?P<n>.+)\})?(?:(?P<p>.+):)?(?P<e>.+)$").unwrap()
+        regex::Regex::new(r"^(?:\{(?P<n>[^;]+)(?:;(?P<l>.+))?\})?(?:(?P<p>.+):)?(?P<e>.+)$").unwrap()
     };
 }
 
