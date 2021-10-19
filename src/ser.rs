@@ -8,12 +8,71 @@ use serde::{ser, Serialize};
 
 pub struct Serializer;
 
+trait EventWriter {
+    fn write<'a, E: Into<xml::writer::XmlEvent<'a>>>(&mut self, event: E) -> xml::writer::Result<()>;
+}
+
+struct EmitterWriter<W: std::io::Write>(xml::writer::EventWriter<W>);
+
+impl<W: std::io::Write> EventWriter for EmitterWriter<W> {
+    fn write<'a, E: Into<xml::writer::XmlEvent<'a>>>(&mut self, event: E) -> xml::writer::Result<()> {
+        self.0.write(event)
+    }
+}
+
+struct ListWriter(Vec<xml::reader::XmlEvent>);
+
+impl EventWriter for ListWriter {
+    fn write<'a, E: Into<xml::writer::XmlEvent<'a>>>(&mut self, event: E) -> xml::writer::Result<()> {
+        let e = event.into();
+        let re = match e {
+            xml::writer::XmlEvent::StartDocument { version, encoding, standalone } => {
+                xml::reader::XmlEvent::StartDocument {
+                    version,
+                    encoding: encoding.unwrap_or("UTF-8").to_string(),
+                    standalone,
+                }
+            }
+            xml::writer::XmlEvent::ProcessingInstruction { name, data } => {
+                xml::reader::XmlEvent::ProcessingInstruction {
+                    name: name.to_string(),
+                    data: data.map(Into::into),
+                }
+            }
+            xml::writer::XmlEvent::StartElement { name, attributes, namespace } => {
+                xml::reader::XmlEvent::StartElement {
+                    name: name.to_owned(),
+                    attributes: (*attributes).iter().map(|a| a.to_owned()).collect(),
+                    namespace: (*namespace).clone(),
+                }
+            }
+            xml::writer::XmlEvent::EndElement { name } => {
+                xml::reader::XmlEvent::EndElement {
+                    name: match name {
+                        Some(n) => n.to_owned(),
+                        None => unreachable!()
+                    },
+                }
+            }
+            xml::writer::XmlEvent::CData(s) => {
+                xml::reader::XmlEvent::CData(s.into())
+            }
+            xml::writer::XmlEvent::Characters(s) => {
+                xml::reader::XmlEvent::Characters(s.into())
+            }
+            xml::writer::XmlEvent::Comment(s) => {
+                xml::reader::XmlEvent::Comment(s.into())
+            }
+        };
+        self.0.push(re);
+        Ok(())
+    }
+}
+
 /// Serialise serde item to XML
 ///
 /// # Arguments
 /// * `value` - The value to be serialised
-/// * `root` - The root XML element name
-/// * `ns` - The default XML namespace
 pub fn to_string<T>(value: &T) -> Result<String, crate::Error>
     where
         T: Serialize,
@@ -28,7 +87,7 @@ pub fn to_string<T>(value: &T) -> Result<String, crate::Error>
     conf.perform_escaping = false;
 
     let c = std::io::Cursor::new(Vec::new());
-    let mut writer = conf.create_writer(c);
+    let mut writer = EmitterWriter(conf.create_writer(c));
     let mut serializer = Serializer;
     let val = value.serialize(&mut serializer)?;
     let mut state = _SerializerState {
@@ -36,7 +95,26 @@ pub fn to_string<T>(value: &T) -> Result<String, crate::Error>
         ns_stack: vec![],
     };
     format_data(&mut writer, &val, &mut state)?;
-    Ok(String::from_utf8(writer.into_inner().into_inner()).unwrap())
+    Ok(String::from_utf8(writer.0.into_inner().into_inner()).unwrap())
+}
+
+/// Serialise serde item to a list of XML events
+///
+/// # Arguments
+/// * `value` - The value to be serialised
+pub fn to_events<T>(value: &T) -> Result<Vec<xml::reader::XmlEvent>, crate::Error>
+    where
+        T: Serialize,
+{
+    let mut writer = ListWriter(vec![]);
+    let mut serializer = Serializer;
+    let val = value.serialize(&mut serializer)?;
+    let mut state = _SerializerState {
+        raw_output: false,
+        ns_stack: vec![],
+    };
+    format_data(&mut writer, &val, &mut state)?;
+    Ok(writer.0)
 }
 
 #[derive(Debug)]
@@ -63,7 +141,7 @@ struct _SerializerState {
     ns_stack: Vec<String>,
 }
 
-fn format_data<W: std::io::Write>(writer: &mut xml::EventWriter<W>, val: &_SerializerData, state: &mut _SerializerState) -> Result<(), crate::Error> {
+fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mut _SerializerState) -> Result<(), crate::Error> {
     match val {
         _SerializerData::CData(s) => {
             writer.write(xml::writer::XmlEvent::cdata(&match state.raw_output {

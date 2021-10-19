@@ -1,3 +1,4 @@
+#![feature(trait_alias)]
 #[allow(unused_imports)]
 #[macro_use]
 extern crate serde_derive;
@@ -10,8 +11,8 @@ mod de;
 mod ser;
 mod error;
 
-pub use ser::{to_string, Serializer};
-pub use de::{from_str, Deserializer};
+pub use ser::{to_string, to_events, Serializer};
+pub use de::{from_str, from_string, from_events, Deserializer};
 pub use error::{Error, Result};
 
 lazy_static! {
