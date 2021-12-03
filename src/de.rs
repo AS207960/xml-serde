@@ -3,9 +3,11 @@ use std::ops::{AddAssign, MulAssign};
 use serde::{de, Deserialize};
 use serde::de::IntoDeserializer;
 
-pub trait XMLIter = Iterator<Item=xml::reader::Result<xml::reader::XmlEvent>>;
+// TODO: revert Iterator<Item=XmlRes> to this if trait_alias stabilizes
+// pub trait XMLIter = Iterator<Item=xml::reader::Result<xml::reader::XmlEvent>>;
+type XmlRes = xml::reader::Result<xml::reader::XmlEvent>;
 
-pub struct Deserializer<I: XMLIter> {
+pub struct Deserializer<I: Iterator<Item=XmlRes>> {
     reader: itertools::MultiPeek<I>,
     depth: u64,
     is_map_value: bool,
@@ -99,7 +101,7 @@ pub fn from_events<'a, T: Deserialize<'a>>(s: &[xml::reader::Result<xml::reader:
     Ok(t)
 }
 
-impl<I: XMLIter> Deserializer<I> {
+impl<I: Iterator<Item=XmlRes>> Deserializer<I> {
     fn set_map_value(&mut self) {
         trace!("set_map_value()");
         self.is_map_value = true;
@@ -291,7 +293,7 @@ impl<I: XMLIter> Deserializer<I> {
     }
 }
 
-impl<'de, 'a, I: XMLIter> de::Deserializer<'de> for &'a mut Deserializer<I> {
+impl<'de, 'a, I: Iterator<Item=XmlRes>> de::Deserializer<'de> for &'a mut Deserializer<I> {
     type Error = crate::Error;
 
     fn deserialize_any<V: serde::de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
@@ -502,12 +504,12 @@ impl<'de, 'a, I: XMLIter> de::Deserializer<'de> for &'a mut Deserializer<I> {
     }
 }
 
-struct Seq<'a, I: XMLIter> {
+struct Seq<'a, I: Iterator<Item=XmlRes>> {
     de: &'a mut Deserializer<I>,
     expected_name: Option<xml::name::OwnedName>,
 }
 
-impl<'a, I: XMLIter> Seq<'a, I> {
+impl<'a, I: Iterator<Item=XmlRes>> Seq<'a, I> {
     fn new(de: &'a mut Deserializer<I>) -> crate::Result<Self> {
         let name = if de.unset_map_value() {
             let val = match de.peek()? {
@@ -528,7 +530,7 @@ impl<'a, I: XMLIter> Seq<'a, I> {
     }
 }
 
-impl<'de, 'a, I: XMLIter> de::SeqAccess<'de> for Seq<'a, I> {
+impl<'de, 'a, I: Iterator<Item=XmlRes>> de::SeqAccess<'de> for Seq<'a, I> {
     type Error = crate::Error;
 
     fn next_element_seed<T: de::DeserializeSeed<'de>>(&mut self, seed: T) -> crate::Result<Option<T::Value>> {
@@ -642,7 +644,7 @@ impl Fields {
     }
 }
 
-struct Map<'a, I: XMLIter> {
+struct Map<'a, I: Iterator<Item=XmlRes>> {
     de: &'a mut Deserializer<I>,
     attrs: Vec<xml::attribute::OwnedAttribute>,
     fields: Fields,
@@ -651,7 +653,7 @@ struct Map<'a, I: XMLIter> {
     next_is_value: bool,
 }
 
-impl<'a, I: XMLIter> Map<'a, I> {
+impl<'a, I: Iterator<Item=XmlRes>> Map<'a, I> {
     fn new(de: &'a mut Deserializer<I>, attrs: Vec<xml::attribute::OwnedAttribute>, fields: &[&str]) -> Self {
         Self {
             de,
@@ -664,7 +666,7 @@ impl<'a, I: XMLIter> Map<'a, I> {
     }
 }
 
-impl<'de, 'a, I: XMLIter> de::MapAccess<'de> for Map<'a, I> {
+impl<'de, 'a, I: Iterator<Item=XmlRes>> de::MapAccess<'de> for Map<'a, I> {
     type Error = crate::Error;
 
     fn next_key_seed<K: de::DeserializeSeed<'de>>(&mut self, seed: K) -> crate::Result<Option<K::Value>> {
@@ -724,12 +726,12 @@ impl<'de, 'a, I: XMLIter> de::MapAccess<'de> for Map<'a, I> {
     }
 }
 
-pub struct Enum<'a, I: XMLIter> {
+pub struct Enum<'a, I: Iterator<Item=XmlRes>> {
     de: &'a mut Deserializer<I>,
     fields: Fields,
 }
 
-impl<'a, I: XMLIter> Enum<'a, I> {
+impl<'a, I: Iterator<Item=XmlRes>> Enum<'a, I> {
     pub fn new(de: &'a mut Deserializer<I>, fields: &[&str]) -> Self {
         Self {
             de,
@@ -738,7 +740,7 @@ impl<'a, I: XMLIter> Enum<'a, I> {
     }
 }
 
-impl<'de, 'a, I: XMLIter> de::EnumAccess<'de> for Enum<'a, I> {
+impl<'de, 'a, I: Iterator<Item=XmlRes>> de::EnumAccess<'de> for Enum<'a, I> {
     type Error = crate::Error;
     type Variant = Self;
 
@@ -766,7 +768,7 @@ impl<'de, 'a, I: XMLIter> de::EnumAccess<'de> for Enum<'a, I> {
     }
 }
 
-impl<'de, 'a, I: XMLIter> de::VariantAccess<'de> for Enum<'a, I> {
+impl<'de, 'a, I: Iterator<Item=XmlRes>> de::VariantAccess<'de> for Enum<'a, I> {
     type Error = crate::Error;
 
     fn unit_variant(self) -> crate::Result<()> {
