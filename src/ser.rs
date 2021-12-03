@@ -69,11 +69,35 @@ impl EventWriter for ListWriter {
     }
 }
 
+pub struct Options {
+  include_schema_location: bool
+}
+
+impl Default for Options {
+  fn default() -> Self {
+    Self {
+      include_schema_location: true
+    }
+  }
+}
+
 /// Serialise serde item to XML
 ///
 /// # Arguments
 /// * `value` - The value to be serialised
 pub fn to_string<T>(value: &T) -> Result<String, crate::Error>
+    where
+        T: Serialize,
+{
+    to_string_custom(value, Options::default())
+}
+
+/// Serialise serde item to XML, with custom options
+///
+/// # Arguments
+/// * `value` - The value to be serialised
+/// * `options` - Custom options for the serializer
+pub fn to_string_custom<T>(value: &T, options: Options) -> Result<String, crate::Error>
     where
         T: Serialize,
 {
@@ -93,6 +117,7 @@ pub fn to_string<T>(value: &T) -> Result<String, crate::Error>
     let mut state = _SerializerState {
         raw_output: false,
         ns_stack: vec![],
+        include_schema_location: options.include_schema_location,
     };
     format_data(&mut writer, &val, &mut state)?;
     Ok(String::from_utf8(writer.0.into_inner().into_inner()).unwrap())
@@ -106,12 +131,25 @@ pub fn to_events<T>(value: &T) -> Result<Vec<xml::reader::XmlEvent>, crate::Erro
     where
         T: Serialize,
 {
+    to_events_custom(value, Options::default())
+}
+
+/// Serialise serde item to a list of XML events, with custom options
+///
+/// # Arguments
+/// * `value` - The value to be serialised
+/// * `options` - Custom options for the serializer
+pub fn to_events_custom<T>(value: &T, options: Options) -> Result<Vec<xml::reader::XmlEvent>, crate::Error>
+    where
+        T: Serialize,
+{
     let mut writer = ListWriter(vec![]);
     let mut serializer = Serializer;
     let val = value.serialize(&mut serializer)?;
     let mut state = _SerializerState {
         raw_output: false,
         ns_stack: vec![],
+        include_schema_location: options.include_schema_location,
     };
     format_data(&mut writer, &val, &mut state)?;
     Ok(writer.0)
@@ -139,6 +177,7 @@ impl _SerializerData {
 struct _SerializerState {
     raw_output: bool,
     ns_stack: Vec<String>,
+    include_schema_location: bool,
 }
 
 fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mut _SerializerState) -> Result<(), crate::Error> {
@@ -203,7 +242,9 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                                     (name, attr_v)
                                 }).collect::<Vec<_>>();
                                 let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
-                                elm = elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
+                                if state.include_schema_location {
+                                    elm = elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
+                                }
                                 let mut loc = String::new();
                                 let mut should_pop = false;
                                 if let Some(n) = caps.name("n") {
@@ -219,11 +260,13 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                                             let last_n = n.rsplit(':').next().unwrap();
                                             loc.push_str(&format!("{} {}.xsd", n, last_n));
                                         }
-                                        elm = elm.attr(xml::name::Name {
-                                            namespace: None,
-                                            local_name: "schemaLocation",
-                                            prefix: Some("xsi"),
-                                        }, &loc);
+                                        if state.include_schema_location {
+                                            elm = elm.attr(xml::name::Name {
+                                                namespace: None,
+                                                local_name: "schemaLocation",
+                                                prefix: Some("xsi"),
+                                            }, &loc);
+                                        }
                                         state.ns_stack.push(n.to_string());
                                         should_pop = true;
                                     }
@@ -262,7 +305,9 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                             }).collect::<Vec<_>>();
 
                             let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
-                            elm = elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
+                            if state.include_schema_location {
+                                elm = elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
+                            }
                             let mut loc = String::new();
                             let mut should_pop = false;
                             if let Some(n) = caps.name("n") {
@@ -278,11 +323,13 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                                         let last_n = n.rsplit(':').next().unwrap();
                                         loc.push_str(&format!("{} {}.xsd", n, last_n));
                                     }
-                                    elm = elm.attr(xml::name::Name {
-                                        namespace: None,
-                                        local_name: "schemaLocation",
-                                        prefix: Some("xsi"),
-                                    }, &loc);
+                                    if state.include_schema_location {
+                                        elm = elm.attr(xml::name::Name {
+                                            namespace: None,
+                                            local_name: "schemaLocation",
+                                            prefix: Some("xsi"),
+                                        }, &loc);
+                                    }
                                     state.ns_stack.push(n.to_string());
                                     should_pop = true;
                                 }
