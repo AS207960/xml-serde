@@ -70,7 +70,7 @@ impl EventWriter for ListWriter {
 }
 
 pub struct Options {
-  include_schema_location: bool
+  pub include_schema_location: bool
 }
 
 impl Default for Options {
