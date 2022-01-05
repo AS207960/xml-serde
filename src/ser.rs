@@ -204,13 +204,13 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
             ..
         } => {
             for (tag, d) in contents {
-                if tag.starts_with(&"$value") {
-                    format_data(writer, &d, state)?;
-                } else if tag == "$valueRaw" {
+                if tag == "$valueRaw" {
                     let old_val = state.raw_output;
                     state.raw_output = true;
                     format_data(writer, &d, state)?;
                     state.raw_output = old_val;
+                } else if tag.starts_with(&"$value") {
+                    format_data(writer, &d, state)?;
                 } else {
                     let caps = crate::NAME_RE.captures(tag).unwrap();
                     let base_name = caps.name("e").unwrap().as_str();
