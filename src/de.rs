@@ -16,6 +16,16 @@ pub struct Deserializer<I: Iterator<Item=XmlRes>> {
     reset_peek_offset: u64,
 }
 
+fn new_reader<I: IntoIterator<Item=XmlRes>>(iter: I) -> itertools::MultiPeek<impl Iterator<Item=XmlRes>> {
+    itertools::multipeek(Box::new(iter.into_iter().filter(|e| match e {
+        &Ok(xml::reader::XmlEvent::ProcessingInstruction { ..}) => {
+            trace!("discarding processing instruction: {:?}", e.as_ref().unwrap());
+            false
+        },
+        _ => true,
+    })))
+}
+
 pub fn from_str<'a, T: Deserialize<'a>>(s: &'a str) -> crate::Result<T> {
     let conf = xml::ParserConfig::new()
         .trim_whitespace(true)
@@ -33,7 +43,7 @@ pub fn from_str<'a, T: Deserialize<'a>>(s: &'a str) -> crate::Result<T> {
         _ => return Err(crate::Error::ExpectedElement)
     }
     let mut deserializer = Deserializer {
-        reader: itertools::multipeek(Box::new(event_reader.into_iter())),
+        reader: new_reader(event_reader),
         depth: 0,
         is_map_value: false,
         is_greedy: true,
@@ -61,7 +71,7 @@ pub fn from_string<'a, T: Deserialize<'a>>(s: String) -> crate::Result<T> {
         _ => return Err(crate::Error::ExpectedElement)
     }
     let mut deserializer = Deserializer {
-        reader: itertools::multipeek(Box::new(event_reader.into_iter())),
+        reader: new_reader(event_reader),
         depth: 0,
         is_map_value: false,
         is_greedy: true,
@@ -73,9 +83,7 @@ pub fn from_string<'a, T: Deserialize<'a>>(s: String) -> crate::Result<T> {
 }
 
 pub fn from_events<'a, T: Deserialize<'a>>(s: &[xml::reader::Result<xml::reader::XmlEvent>]) -> crate::Result<T> {
-    let mut reader = itertools::multipeek(
-        s.into_iter().map(|r| r.to_owned())
-    );
+    let mut reader = new_reader(s.into_iter().map(|r| r.to_owned()));
     if let Ok(xml::reader::XmlEvent::StartDocument { .. }) = reader.peek().ok_or(crate::Error::ExpectedElement)? {
         match reader.next() {
             Some(Ok(xml::reader::XmlEvent::StartDocument {
