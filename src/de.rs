@@ -858,3 +858,51 @@ impl<'de> serde::de::Deserializer<'de> for AttrValueDeserializer {
         struct identifier tuple ignored_any byte_buf
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn deserialize_element_into_struct() {
+        #[derive(Debug, PartialEq, Deserialize)]
+        struct Foo {
+            #[serde(rename = "{urn:foo}foo:bar")]
+            bar: String,
+        }
+
+        assert_eq!(
+            crate::from_str::<Foo>(
+                r#"
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<foo:bar xmlns:foo="urn:foo">baz</foo:bar>
+            "#
+            )
+                .unwrap(),
+            Foo {
+                bar: "baz".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn deserialize_element_with_processing_instruction_into_struct() {
+        #[derive(Debug, PartialEq, Deserialize)]
+        struct Foo {
+            #[serde(rename = "{urn:foo}foo:bar")]
+            bar: String,
+        }
+
+        assert_eq!(
+            crate::from_str::<Foo>(
+                r#"
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<?xml-stylesheet href='foo.xsl' type='text/xsl'?>
+<foo:bar xmlns:foo="urn:foo">baz</foo:bar>
+            "#
+            )
+                .unwrap(),
+            Foo {
+                bar: "baz".to_string()
+            }
+        );
+    }
+}
