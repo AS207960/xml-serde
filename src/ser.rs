@@ -365,7 +365,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     type SerializeStructVariant = StructVariantSerializer<'a>;
 
     fn serialize_bool(self, v: bool) -> Result<_SerializerData, Self::Error> {
-        let val = if v { "1" } else { "0" };
+        let val = if v { "true" } else { "false" };
         Ok(_SerializerData::String(val.to_string()))
     }
 
