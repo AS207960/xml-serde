@@ -10,7 +10,7 @@ mod de;
 mod ser;
 mod error;
 
-pub use ser::{to_string, to_string_custom, to_events, to_events_custom, Serializer};
+pub use ser::{to_string, to_string_custom, to_events, to_events_custom, Serializer, Options};
 pub use de::{from_str, from_string, from_events, Deserializer};
 pub use error::{Error, Result};
 
