@@ -1,7 +1,9 @@
+use std::borrow::Cow;
 use std::ops::{AddAssign, MulAssign};
 
 use serde::{de, Deserialize};
 use serde::de::IntoDeserializer;
+use crate::Tag;
 
 // TODO: revert Iterator<Item=XmlRes> to this if trait_alias stabilizes
 // pub trait XMLIter = Iterator<Item=xml::reader::Result<xml::reader::XmlEvent>>;
@@ -563,45 +565,84 @@ impl<'de, 'a, I: Iterator<Item=XmlRes>> de::SeqAccess<'de> for Seq<'a, I> {
 }
 
 struct Fields {
-    fields: Vec<Field>,
+    fields: &'static[Field],
     inner_value: bool,
     num_value: u64,
     value_used: u64,
 }
 
+#[derive(Clone)]
 struct Field {
-    namespace: Option<String>,
-    local_name: String,
-    name: String,
+    namespace: Option<&'static str>,
+    local_name: &'static str,
+    name: &'static str,
     attr: bool,
 }
 
-impl From<&&str> for Field {
-    fn from(from: &&str) -> Self {
+impl From<&&'static str> for Field {
+    fn from(from: &&'static str) -> Self {
         let mut attr = false;
-        let from = if from.starts_with("$attr:") {
+        let name = if from.starts_with("$attr:") {
             attr = true;
             &from[6..]
         } else {
             from
         };
-        let caps = crate::NAME_RE.captures(from).unwrap();
-        let base_name = caps.name("e").unwrap().as_str().to_string();
-        let namespace = caps.name("n").map(|n| n.as_str().to_string());
+
+        let Tag{
+            e: local_name,
+            n: namespace,
+            ..
+        } = crate::Tag::from_static(name);
+
         Field {
             namespace,
-            local_name: base_name,
-            name: from.to_string(),
+            local_name,
+            name,
             attr,
         }
     }
 }
 
-impl From<&[&str]> for Fields {
-    fn from(from: &[&str]) -> Self {
-        let num_value = from.iter().filter(|f| f.starts_with(&"$value")).count() as u64;
+impl From<&'static [&'static str]> for Fields {
+    fn from(from: &'static [&'static str]) -> Self {
+        use once_cell::sync::OnceCell;
+        use std::sync::Mutex;
+        use std::collections::btree_map::{BTreeMap,Entry};
+
+        let (fields, num_value) = {
+            // Make a single global BTreeMap to act as a cache
+            static CACHE: OnceCell<Mutex<BTreeMap<usize, (&'static [Field], u64)>>> = OnceCell::new();
+            let mut cache = CACHE.get_or_init(|| {
+                Mutex::new(BTreeMap::new())
+            }).lock().unwrap();
+
+            // Look up the pointer address of our &'static [&'static str] in the cache
+            match cache.entry((*from).as_ptr() as usize) {
+                Entry::Vacant(e) => {
+                    // Miss
+                    // Convert the str slice into a Vec<Field>
+                    let fields: Vec<Field> = from.iter().map(|f| f.into()).collect();
+
+                    // Convert the Vec into a &'static [Field]
+                    let fields = Box::leak(fields.into_boxed_slice());
+
+                    // Count how many $value fields we have
+                    let num_value = from.iter().filter(|f| f.starts_with(&"$value")).count() as u64;
+
+                    // Add it to the cache
+                    *e.insert((fields, num_value))
+                }
+                Entry::Occupied(e) => {
+                    // Hit
+                    // Use the existing slice and count
+                    *e.get()
+                }
+            }
+        };
+
         Fields {
-            fields: from.iter().map(|f| f.into()).collect(),
+            fields,
             inner_value: num_value >= 1,
             num_value: num_value,
             value_used: 0,
@@ -610,11 +651,11 @@ impl From<&[&str]> for Fields {
 }
 
 impl Fields {
-    fn match_field(&mut self, name: &xml::name::OwnedName) -> String {
-        for field in &self.fields {
-            if field.local_name == name.local_name && field.namespace == name.namespace && !field.attr {
+    fn match_field(&mut self, name: &xml::name::OwnedName) -> Cow<'static, str> {
+        for field in self.fields.iter() {
+            if field.local_name == name.local_name && field.namespace == name.namespace.as_deref() && !field.attr {
                 trace!("match_field({:?}) -> {:?}", name, field.name);
-                return field.name.clone();
+                return field.name.into();
             }
         }
         let name_str = if self.inner_value && self.value_used < self.num_value {
@@ -631,15 +672,15 @@ impl Fields {
             }
         };
         trace!("match_field({:?}) -> {:?}", name, name_str);
-        name_str
+        name_str.into()
     }
 
-    fn match_attr(&self, name: &xml::name::OwnedName) -> String {
-        for field in &self.fields {
-            if field.local_name == name.local_name && field.namespace == name.namespace && field.attr {
+    fn match_attr(&self, name: &xml::name::OwnedName) -> Cow<'static, str> {
+        for field in self.fields.iter() {
+            if field.local_name == name.local_name && field.namespace == name.namespace.as_deref() && field.attr {
                 let name_str = format!("$attr:{}", field.name);
                 trace!("match_attr({:?}) -> {:?}", name, name_str);
-                return name_str;
+                return name_str.into();
             }
         }
         let name_str = match &name.namespace {
@@ -648,7 +689,7 @@ impl Fields {
         };
         let name_str = format!("$attr:{}", name_str);
         trace!("match_attr({:?}) -> {:?}", name, name_str);
-        name_str
+        name_str.into()
     }
 }
 
@@ -662,7 +703,7 @@ struct Map<'a, I: Iterator<Item=XmlRes>> {
 }
 
 impl<'a, I: Iterator<Item=XmlRes>> Map<'a, I> {
-    fn new(de: &'a mut Deserializer<I>, attrs: Vec<xml::attribute::OwnedAttribute>, fields: &[&str]) -> Self {
+    fn new(de: &'a mut Deserializer<I>, attrs: Vec<xml::attribute::OwnedAttribute>, fields: &'static [&'static str]) -> Self {
         Self {
             de,
             attrs,
@@ -684,7 +725,7 @@ impl<'de, 'a, I: Iterator<Item=XmlRes>> de::MapAccess<'de> for Map<'a, I> {
                 let name = self.fields.match_attr(&name);
                 self.next_value = Some(value);
                 self.next_is_value = false;
-                seed.deserialize(name.as_str().into_deserializer()).map(Some)
+                seed.deserialize(name.as_ref().into_deserializer()).map(Some)
             }
             None => {
                 let val = match *self.de.peek()? {
@@ -694,7 +735,7 @@ impl<'de, 'a, I: Iterator<Item=XmlRes>> de::MapAccess<'de> for Map<'a, I> {
                         let name = self.fields.match_field(name);
                         self.inner_value = name.starts_with(&"$value");
                         self.next_is_value = name.starts_with(&"$value");
-                        seed.deserialize(name.as_str().into_deserializer()).map(Some)
+                        seed.deserialize(name.as_ref().into_deserializer()).map(Some)
                     }
                     xml::reader::XmlEvent::Characters(_) | xml::reader::XmlEvent::CData(_) => {
                         self.next_is_value = true;
@@ -740,7 +781,7 @@ pub struct Enum<'a, I: Iterator<Item=XmlRes>> {
 }
 
 impl<'a, I: Iterator<Item=XmlRes>> Enum<'a, I> {
-    pub fn new(de: &'a mut Deserializer<I>, fields: &[&str]) -> Self {
+    pub fn new(de: &'a mut Deserializer<I>, fields: &'static [&'static str]) -> Self {
         Self {
             de,
             fields: fields.into(),
@@ -762,7 +803,7 @@ impl<'de, 'a, I: Iterator<Item=XmlRes>> de::EnumAccess<'de> for Enum<'a, I> {
                 if !name_str.starts_with(&"$value") {
                     self.de.set_map_value();
                 }
-                let name_str: serde::de::value::StrDeserializer<crate::Error> = name_str.as_str().into_deserializer();
+                let name_str: serde::de::value::CowStrDeserializer<crate::Error> = name_str.into_deserializer();
                 Ok(seed.deserialize(name_str)?)
             }
             xml::reader::XmlEvent::Characters(s) | xml::reader::XmlEvent::CData(s) => {

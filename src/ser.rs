@@ -4,7 +4,9 @@
 //! Tags starting with `$attr:` will be encoded as attributes rather than new elements.
 //! Namespaces and prefixes can be set using the tag name format `{namespace}prefix:tag-name`.
 
+use std::borrow::Cow;
 use serde::{ser, Serialize};
+use crate::Tag;
 
 pub struct Serializer;
 
@@ -160,7 +162,7 @@ pub enum _SerializerData {
     CData(String),
     String(String),
     Seq(Vec<_SerializerData>),
-    Struct { attrs: Vec<(String, String)>, contents: Vec<(String, _SerializerData)> },
+    Struct { attrs: Vec<(Cow<'static, str>, String)>, contents: Vec<(Cow<'static, str>, _SerializerData)> },
 }
 
 impl _SerializerData {
@@ -204,7 +206,7 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
             ..
         } => {
             for (tag, d) in contents {
-                if tag == "$valueRaw" {
+                if *tag == "$valueRaw" {
                     let old_val = state.raw_output;
                     state.raw_output = true;
                     format_data(writer, &d, state)?;
@@ -212,10 +214,10 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                 } else if tag.starts_with(&"$value") {
                     format_data(writer, &d, state)?;
                 } else {
-                    let caps = crate::NAME_RE.captures(tag).unwrap();
-                    let base_name = caps.name("e").unwrap().as_str();
-                    let name = match caps.name("p") {
-                        Some(p) => format!("{}:{}", p.as_str(), base_name),
+                    let parsed_tag = Tag::from_cow(&tag);
+                    let base_name = parsed_tag.e;
+                    let name = match parsed_tag.p {
+                        Some(p) => format!("{}:{}", p, base_name),
                         None => base_name.to_string()
                     };
 
@@ -230,16 +232,7 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                                     _ => vec![]
                                 };
                                 let attrs = attrs.iter().map(|(attr_k, attr_v)| {
-                                    let caps = crate::NAME_RE.captures(attr_k).unwrap();
-                                    let base_name = caps.name("e").unwrap().as_str();
-                                    let ns = caps.name("n").map(|n| n.as_str());
-                                    let prefix = caps.name("p").map(|n| n.as_str());
-                                    let name = xml::name::Name {
-                                        local_name: base_name,
-                                        namespace: ns,
-                                        prefix,
-                                    };
-                                    (name, attr_v)
+                                    (xml::name::Name::from(Tag::from_cow(attr_k)), attr_v)
                                 }).collect::<Vec<_>>();
                                 let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
                                 if state.include_schema_location {
@@ -247,16 +240,15 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                                 }
                                 let mut loc = String::new();
                                 let mut should_pop = false;
-                                if let Some(n) = caps.name("n") {
-                                    let n = n.as_str();
-                                    match caps.name("p") {
-                                        Some(p) => elm = elm.ns(p.as_str(), n),
+                                if let Some(n) = parsed_tag.n {
+                                    match parsed_tag.p {
+                                        Some(p) => elm = elm.ns(p, n),
                                         None => elm = elm.default_ns(n)
                                     };
                                     if !state.ns_stack.iter().any(|ns| ns == n) {
-                                        if let Some(l) = caps.name("l") {
-                                            if !l.as_str().is_empty() {
-                                                loc.push_str(&format!("{} {}", n, l.as_str()));
+                                        if let Some(l) = parsed_tag.l {
+                                            if !l.is_empty() {
+                                                loc.push_str(&format!("{} {}", n, l));
                                             }
                                         } else {
                                             let last_n = n.rsplit(':').next().unwrap();
@@ -294,16 +286,7 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                                 _ => vec![]
                             };
                             let attrs = attrs.iter().map(|(attr_k, attr_v)| {
-                                let caps = crate::NAME_RE.captures(attr_k).unwrap();
-                                let base_name = caps.name("e").unwrap().as_str();
-                                let ns = caps.name("n").map(|n| n.as_str());
-                                let prefix = caps.name("p").map(|n| n.as_str());
-                                let name = xml::name::Name {
-                                    local_name: base_name,
-                                    namespace: ns,
-                                    prefix,
-                                };
-                                (name, attr_v)
+                                (xml::name::Name::from(Tag::from_cow(attr_k)), attr_v)
                             }).collect::<Vec<_>>();
 
                             let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
@@ -312,16 +295,15 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                             }
                             let mut loc = String::new();
                             let mut should_pop = false;
-                            if let Some(n) = caps.name("n") {
-                                let n = n.as_str();
-                                match caps.name("p") {
-                                    Some(p) => elm = elm.ns(p.as_str(), n),
+                            if let Some(n) = parsed_tag.n {
+                                match parsed_tag.p {
+                                    Some(p) => elm = elm.ns(p, n),
                                     None => elm = elm.default_ns(n)
                                 };
                                 if !state.ns_stack.iter().any(|ns| ns == n) {
-                                    if let Some(l) = caps.name("l") {
-                                        if !l.as_str().is_empty() {
-                                            loc.push_str(&format!("{} {}", n, l.as_str()));
+                                    if let Some(l) = parsed_tag.l {
+                                        if !l.is_empty() {
+                                            loc.push_str(&format!("{} {}", n, l));
                                         }
                                     } else {
                                         let last_n = n.rsplit(':').next().unwrap();
@@ -477,7 +459,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         let value = value.serialize(&mut *self)?;
         Ok(_SerializerData::Struct {
             attrs: vec![],
-            contents: vec![(variant.to_string(), value)],
+            contents: vec![(variant.into(), value)],
         })
     }
 
@@ -625,7 +607,7 @@ impl<'a> ser::SerializeTupleVariant for SeqSerializer<'a> {
 
 pub struct MapSerializer<'a> {
     parent: &'a mut Serializer,
-    keys: Vec<(String, _SerializerData)>,
+    keys: Vec<(Cow<'static, str>, _SerializerData)>,
     cur_key: String,
 }
 
@@ -647,22 +629,22 @@ impl<'a> ser::SerializeMap for MapSerializer<'a> {
             T: ?Sized + Serialize,
     {
         let val = value.serialize(&mut *self.parent)?;
-        self.keys.push((self.cur_key.to_owned(), val));
+        self.keys.push((self.cur_key.clone().into(), val));
         Ok(())
     }
 
     fn end(self) -> Result<_SerializerData, Self::Error> {
         Ok(_SerializerData::Struct {
             attrs: vec![],
-            contents: self.keys,
+            contents: self.keys.into_iter().map(|(k,v)| (Cow::from(k), v)).collect(),
         })
     }
 }
 
 pub struct StructSerializer<'a> {
     parent: &'a mut Serializer,
-    attrs: Vec<(String, String)>,
-    keys: Vec<(String, _SerializerData)>,
+    attrs: Vec<(&'static str, String)>,
+    keys: Vec<(&'static str, _SerializerData)>,
 }
 
 impl<'a> ser::SerializeStruct for StructSerializer<'a> {
@@ -675,25 +657,25 @@ impl<'a> ser::SerializeStruct for StructSerializer<'a> {
     {
         let val = value.serialize(&mut *self.parent)?;
         if key.starts_with("$attr:") {
-            self.attrs.push((key[6..].to_string(), val.as_str()));
+            self.attrs.push((&key[6..], val.as_str()));
         } else {
-            self.keys.push((key.to_string(), val));
+            self.keys.push((key, val));
         }
         Ok(())
     }
 
     fn end(self) -> Result<_SerializerData, Self::Error> {
         Ok(_SerializerData::Struct {
-            attrs: self.attrs,
-            contents: self.keys,
+            attrs: self.attrs.into_iter().map(|(k,v)| (k.into(), v)).collect(),
+            contents: self.keys.into_iter().map(|(k,v)| (k.into(), v)).collect(),
         })
     }
 }
 
 pub struct StructVariantSerializer<'a> {
     parent: &'a mut Serializer,
-    attrs: Vec<(String, String)>,
-    keys: Vec<(String, _SerializerData)>,
+    attrs: Vec<(Cow<'static, str>, String)>,
+    keys: Vec<(Cow<'static, str>, _SerializerData)>,
     tag: String,
 }
 
@@ -707,9 +689,9 @@ impl<'a> ser::SerializeStructVariant for StructVariantSerializer<'a> {
     {
         let val = value.serialize(&mut *self.parent)?;
         if key.starts_with("$attr:") {
-            self.attrs.push((key[6..].to_string(), val.as_str()));
+            self.attrs.push((key[6..].into(), val.as_str()));
         } else {
-            self.keys.push((key.to_string(), val));
+            self.keys.push((key.into(), val));
         }
         Ok(())
     }
@@ -717,7 +699,7 @@ impl<'a> ser::SerializeStructVariant for StructVariantSerializer<'a> {
     fn end(self) -> Result<_SerializerData, Self::Error> {
         Ok(_SerializerData::Struct {
             attrs: vec![],
-            contents: vec![(self.tag, _SerializerData::Struct {
+            contents: vec![(self.tag.into(), _SerializerData::Struct {
                 attrs: self.attrs,
                 contents: self.keys,
             })],
