@@ -13,6 +13,7 @@ pub struct Deserializer<I: Iterator<Item=XmlRes>> {
     reader: itertools::MultiPeek<I>,
     depth: u64,
     is_map_value: bool,
+    is_seq_value: bool,
     is_greedy: bool,
     is_value: bool,
     reset_peek_offset: u64,
@@ -42,12 +43,16 @@ pub fn from_str<'a, T: Deserialize<'a>>(s: &'a str) -> crate::Result<T> {
         } => {
             trace!("start_document({:?}, {:?}, {:?})", version, encoding, standalone);
         }
-        _ => return Err(crate::Error::ExpectedElement)
+        o => {
+            trace!("unknown_start({:?})", o);
+            return Err(crate::Error::ExpectedElement)
+        }
     }
     let mut deserializer = Deserializer {
         reader: new_reader(event_reader),
         depth: 0,
         is_map_value: false,
+        is_seq_value: false,
         is_greedy: true,
         is_value: false,
         reset_peek_offset: 0,
@@ -76,6 +81,7 @@ pub fn from_string<'a, T: Deserialize<'a>>(s: String) -> crate::Result<T> {
         reader: new_reader(event_reader),
         depth: 0,
         is_map_value: false,
+        is_seq_value: false,
         is_greedy: true,
         is_value: false,
         reset_peek_offset: 0,
@@ -103,6 +109,7 @@ pub fn from_events<'a, T: Deserialize<'a>>(s: &[xml::reader::Result<xml::reader:
         reader,
         depth: 0,
         is_map_value: false,
+        is_seq_value: false,
         is_greedy: true,
         is_value: false,
         reset_peek_offset: 0,
@@ -118,8 +125,19 @@ impl<I: Iterator<Item=XmlRes>> Deserializer<I> {
     }
 
     pub fn unset_map_value(&mut self) -> bool {
+        trace!("unset_map_value()");
         self.is_value = false;
         std::mem::replace(&mut self.is_map_value, false)
+    }
+
+    fn set_seq_value(&mut self) {
+        trace!("set_seq_value()");
+        self.is_seq_value = true;
+    }
+
+    pub fn unset_seq_value(&mut self) -> bool {
+        trace!("unset_seq_value()");
+        std::mem::replace(&mut self.is_seq_value, false)
     }
 
     fn set_is_value(&mut self) {
@@ -128,6 +146,7 @@ impl<I: Iterator<Item=XmlRes>> Deserializer<I> {
     }
 
     pub fn unset_is_value(&mut self) -> bool {
+        trace!("unset_is_value()");
         std::mem::replace(&mut self.is_value, false)
     }
 
@@ -155,6 +174,7 @@ impl<I: Iterator<Item=XmlRes>> Deserializer<I> {
     }
 
     fn reset_peek(&mut self) {
+        trace!("reset_peek()");
         self.reader.reset_peek();
         for _ in 0..self.reset_peek_offset {
             self.reader.peek();
@@ -231,8 +251,39 @@ impl<I: Iterator<Item=XmlRes>> Deserializer<I> {
         }
     }
 
+    fn step_over(&mut self) -> crate::Result<()> {
+        if self.is_greedy {
+            let depth = self.depth;
+            loop {
+                self.next()?;
+                if self.depth == depth {
+                    break;
+                }
+            }
+        } else {
+            let mut depth = 0;
+            loop {
+                let next = self.peek()?;
+                match next {
+                    xml::reader::XmlEvent::StartElement { .. } => {
+                        depth += 1;
+                    }
+                    xml::reader::XmlEvent::EndElement { .. } => {
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+                self.reset_peek_offset += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn parse_string(&mut self) -> crate::Result<String> {
-        trace!("prase_string()");
+        trace!("parse_string()");
         self.read_inner_value(|this| {
             match this.peek()? {
                 xml::reader::XmlEvent::EndElement {
@@ -306,20 +357,50 @@ impl<I: Iterator<Item=XmlRes>> Deserializer<I> {
 impl<'de, 'a, I: Iterator<Item=XmlRes>> de::Deserializer<'de> for &'a mut Deserializer<I> {
     type Error = crate::Error;
 
-    fn deserialize_any<V: serde::de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
+    fn deserialize_any<V: serde::de::Visitor<'de>>(mut self, visitor: V) -> crate::Result<V::Value> {
         trace!("deserialize_any()");
-        if let xml::reader::XmlEvent::CData(_) | xml::reader::XmlEvent::Characters(_) = self.peek()? {
-            let s = match self.next()? {
-                xml::reader::XmlEvent::CData(s) | xml::reader::XmlEvent::Characters(s) => s,
-                _ => unreachable!()
-            };
-            visitor.visit_string(s)
-        } else {
+        if self.is_map_value && !self.unset_seq_value() {
             self.reset_peek();
-            self.read_inner_value_attrs(|this, attrs| {
-                visitor.visit_map(Map::new(this, attrs, &[]))
-            })
+            if let xml::reader::XmlEvent::StartElement { name: name1, .. } = self.peek()? {
+                let name1 = name1.to_owned();
+                self.reset_peek();
+                self.set_not_greedy();
+                self.step_over()?;
+                self.reset_peek_offset = 0;
+                if let xml::reader::XmlEvent::StartElement { name: name2, .. } = self.peek()? {
+                    if name1 == *name2 {
+                        self.reset_peek_offset = 0;
+                        self.reset_peek();
+                        self.set_map_value();
+                        return visitor.visit_seq(Seq::new(&mut self)?);
+                    }
+                }
+            }
         }
+        let is_map = self.is_map_value;
+        self.read_inner_value_attrs(|this, attrs| {
+            if let xml::reader::XmlEvent::CData(_) | xml::reader::XmlEvent::Characters(_) = this.peek()? {
+                let s = match this.next()? {
+                    xml::reader::XmlEvent::CData(s) | xml::reader::XmlEvent::Characters(s) => s,
+                    _ => unreachable!()
+                };
+                visitor.visit_string(s)
+            } else {
+                if !is_map {
+                    match this.next()? {
+                        xml::reader::XmlEvent::StartElement { name, .. } => {
+                            let result = visitor.visit_map(Map::new(this, attrs, &[]))?;
+                            this.expect_end_element(name)?;
+                            Ok(result)
+                        }
+                        _ => Err(crate::Error::ExpectedElement)
+                    }
+                } else {
+                    this.reset_peek();
+                    visitor.visit_map(Map::new(this, attrs, &[]))
+                }
+            }
+        })
         // self.peek();
         // Err(crate::Error::Unsupported)
     }
@@ -438,7 +519,9 @@ impl<'de, 'a, I: Iterator<Item=XmlRes>> de::Deserializer<'de> for &'a mut Deseri
 
     fn deserialize_seq<V: serde::de::Visitor<'de>>(mut self, visitor: V) -> crate::Result<V::Value> {
         trace!("deserialize_seq()");
-        visitor.visit_seq(Seq::new(&mut self)?)
+        let res = visitor.visit_seq(Seq::new(&mut self)?)?;
+        self.unset_seq_value();
+        Ok(res)
     }
 
     fn deserialize_tuple<V: serde::de::Visitor<'de>>(self, len: usize, visitor: V) -> crate::Result<V::Value> {
@@ -483,33 +566,7 @@ impl<'de, 'a, I: Iterator<Item=XmlRes>> de::Deserializer<'de> for &'a mut Deseri
 
     fn deserialize_ignored_any<V: serde::de::Visitor<'de>>(self, visitor: V) -> crate::Result<V::Value> {
         trace!("deserialize_ignored_any()");
-        if self.is_greedy {
-            let depth = self.depth;
-            loop {
-                self.next()?;
-                if self.depth == depth {
-                    break;
-                }
-            }
-        } else {
-            let mut depth = 0;
-            loop {
-                let next = self.peek()?;
-                match next {
-                    xml::reader::XmlEvent::StartElement { .. } => {
-                        depth += 1;
-                    }
-                    xml::reader::XmlEvent::EndElement { .. } => {
-                        depth -= 1;
-                    }
-                    _ => {}
-                }
-                self.reset_peek_offset += 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-        }
+        self.step_over()?;
         visitor.visit_unit()
     }
 }
@@ -521,6 +578,7 @@ struct Seq<'a, I: Iterator<Item=XmlRes>> {
 
 impl<'a, I: Iterator<Item=XmlRes>> Seq<'a, I> {
     fn new(de: &'a mut Deserializer<I>) -> crate::Result<Self> {
+        trace!("Seq::new()");
         let name = if de.unset_map_value() {
             let val = match de.peek()? {
                 xml::reader::XmlEvent::StartElement { name, .. } => {
@@ -557,6 +615,7 @@ impl<'de, 'a, I: Iterator<Item=XmlRes>> de::SeqAccess<'de> for Seq<'a, I> {
             if self.expected_name.is_some() {
                 self.de.set_map_value();
             }
+            self.de.set_seq_value();
             seed.deserialize(&mut *self.de).map(Some)
         } else {
             Ok(None)
@@ -644,7 +703,7 @@ impl From<&'static [&'static str]> for Fields {
         Fields {
             fields,
             inner_value: num_value >= 1,
-            num_value: num_value,
+            num_value,
             value_used: 0,
         }
     }
@@ -704,6 +763,7 @@ struct Map<'a, I: Iterator<Item=XmlRes>> {
 
 impl<'a, I: Iterator<Item=XmlRes>> Map<'a, I> {
     fn new(de: &'a mut Deserializer<I>, attrs: Vec<xml::attribute::OwnedAttribute>, fields: &'static [&'static str]) -> Self {
+        trace!("Map::new({:?})", fields);
         Self {
             de,
             attrs,
@@ -782,6 +842,7 @@ pub struct Enum<'a, I: Iterator<Item=XmlRes>> {
 
 impl<'a, I: Iterator<Item=XmlRes>> Enum<'a, I> {
     pub fn new(de: &'a mut Deserializer<I>, fields: &'static [&'static str]) -> Self {
+        trace!("Enum::new({:?})", fields);
         Self {
             de,
             fields: fields.into(),
