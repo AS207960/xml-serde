@@ -614,6 +614,8 @@ impl<'de, 'a, I: Iterator<Item=XmlRes>> de::SeqAccess<'de> for Seq<'a, I> {
         if more {
             if self.expected_name.is_some() {
                 self.de.set_map_value();
+            } else {
+                self.de.unset_map_value();
             }
             self.de.set_seq_value();
             seed.deserialize(&mut *self.de).map(Some)
