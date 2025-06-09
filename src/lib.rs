@@ -6,15 +6,15 @@ extern crate log;
 extern crate core;
 
 mod de;
-mod ser;
 mod error;
+mod ser;
 mod tag;
 
 pub(crate) use tag::Tag;
 
-pub use ser::{to_string, to_string_custom, to_events, to_events_custom, Serializer, Options};
-pub use de::{from_str, from_string, from_events, Deserializer};
+pub use de::{from_events, from_str, from_string, Deserializer};
 pub use error::{Error, Result};
+pub use ser::{to_events, to_events_custom, to_string, to_string_custom, Options, Serializer};
 
 #[cfg(test)]
 mod tests {
@@ -37,12 +37,14 @@ mod tests {
         pub message: EPPMessageType,
     }
 
-
     #[derive(Debug, Serialize)]
     pub struct EPPCommand {
         #[serde(rename = "$valueRaw")]
         pub command: String,
-        #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}clTRID", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "{urn:ietf:params:xml:ns:epp-1.0}clTRID",
+            skip_serializing_if = "Option::is_none"
+        )]
         pub client_transaction_id: Option<String>,
     }
 
@@ -58,7 +60,10 @@ mod tests {
         pub client_id: String,
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}pw")]
         pub password: String,
-        #[serde(rename = "$attr:{http://www.w3.org/2001/XMLSchema-instance}newPW", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "$attr:{http://www.w3.org/2001/XMLSchema-instance}newPW",
+            skip_serializing_if = "Option::is_none"
+        )]
         pub new_password: Option<String>,
         pub options: EPPLoginOptions,
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}svcs")]
@@ -78,15 +83,18 @@ mod tests {
         pub objects: Vec<String>,
     }
 
-
     #[test]
     fn encode() {
         pretty_env_logger::init();
-        println!("{:?}", super::ser::to_string(&EPPMessage {
-            message: EPPMessageType::Command(EPPCommand {
-                command: "&".to_string(),
-                client_transaction_id: Some("&".to_string()),
+        println!(
+            "{:?}",
+            super::ser::to_string(&EPPMessage {
+                message: EPPMessageType::Command(EPPCommand {
+                    command: "&".to_string(),
+                    client_transaction_id: Some("&".to_string()),
+                })
             })
-        }).unwrap());
+            .unwrap()
+        );
     }
 }

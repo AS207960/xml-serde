@@ -8,7 +8,7 @@ pub enum Error {
     ExpectedBool,
     ExpectedInt,
     ExpectedElement,
-    Unsupported
+    Unsupported,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

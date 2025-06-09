@@ -4,20 +4,26 @@
 //! Tags starting with `$attr:` will be encoded as attributes rather than new elements.
 //! Namespaces and prefixes can be set using the tag name format `{namespace}prefix:tag-name`.
 
-use std::borrow::Cow;
-use serde::{ser, Serialize};
 use crate::Tag;
+use serde::{ser, Serialize};
+use std::borrow::Cow;
 
 pub struct Serializer;
 
 trait EventWriter {
-    fn write<'a, E: Into<xml::writer::XmlEvent<'a>>>(&mut self, event: E) -> xml::writer::Result<()>;
+    fn write<'a, E: Into<xml::writer::XmlEvent<'a>>>(
+        &mut self,
+        event: E,
+    ) -> xml::writer::Result<()>;
 }
 
 struct EmitterWriter<W: std::io::Write>(xml::writer::EventWriter<W>);
 
 impl<W: std::io::Write> EventWriter for EmitterWriter<W> {
-    fn write<'a, E: Into<xml::writer::XmlEvent<'a>>>(&mut self, event: E) -> xml::writer::Result<()> {
+    fn write<'a, E: Into<xml::writer::XmlEvent<'a>>>(
+        &mut self,
+        event: E,
+    ) -> xml::writer::Result<()> {
         self.0.write(event)
     }
 }
@@ -25,46 +31,45 @@ impl<W: std::io::Write> EventWriter for EmitterWriter<W> {
 struct ListWriter(Vec<xml::reader::XmlEvent>);
 
 impl EventWriter for ListWriter {
-    fn write<'a, E: Into<xml::writer::XmlEvent<'a>>>(&mut self, event: E) -> xml::writer::Result<()> {
+    fn write<'a, E: Into<xml::writer::XmlEvent<'a>>>(
+        &mut self,
+        event: E,
+    ) -> xml::writer::Result<()> {
         let e = event.into();
         let re = match e {
-            xml::writer::XmlEvent::StartDocument { version, encoding, standalone } => {
-                xml::reader::XmlEvent::StartDocument {
-                    version,
-                    encoding: encoding.unwrap_or("UTF-8").to_string(),
-                    standalone,
-                }
-            }
+            xml::writer::XmlEvent::StartDocument {
+                version,
+                encoding,
+                standalone,
+            } => xml::reader::XmlEvent::StartDocument {
+                version,
+                encoding: encoding.unwrap_or("UTF-8").to_string(),
+                standalone,
+            },
             xml::writer::XmlEvent::ProcessingInstruction { name, data } => {
                 xml::reader::XmlEvent::ProcessingInstruction {
                     name: name.to_string(),
                     data: data.map(Into::into),
                 }
             }
-            xml::writer::XmlEvent::StartElement { name, attributes, namespace } => {
-                xml::reader::XmlEvent::StartElement {
-                    name: name.to_owned(),
-                    attributes: (*attributes).iter().map(|a| a.to_owned()).collect(),
-                    namespace: (*namespace).clone(),
-                }
-            }
-            xml::writer::XmlEvent::EndElement { name } => {
-                xml::reader::XmlEvent::EndElement {
-                    name: match name {
-                        Some(n) => n.to_owned(),
-                        None => unreachable!()
-                    },
-                }
-            }
-            xml::writer::XmlEvent::CData(s) => {
-                xml::reader::XmlEvent::CData(s.into())
-            }
-            xml::writer::XmlEvent::Characters(s) => {
-                xml::reader::XmlEvent::Characters(s.into())
-            }
-            xml::writer::XmlEvent::Comment(s) => {
-                xml::reader::XmlEvent::Comment(s.into())
-            }
+            xml::writer::XmlEvent::StartElement {
+                name,
+                attributes,
+                namespace,
+            } => xml::reader::XmlEvent::StartElement {
+                name: name.to_owned(),
+                attributes: (*attributes).iter().map(|a| a.to_owned()).collect(),
+                namespace: (*namespace).clone(),
+            },
+            xml::writer::XmlEvent::EndElement { name } => xml::reader::XmlEvent::EndElement {
+                name: match name {
+                    Some(n) => n.to_owned(),
+                    None => unreachable!(),
+                },
+            },
+            xml::writer::XmlEvent::CData(s) => xml::reader::XmlEvent::CData(s.into()),
+            xml::writer::XmlEvent::Characters(s) => xml::reader::XmlEvent::Characters(s.into()),
+            xml::writer::XmlEvent::Comment(s) => xml::reader::XmlEvent::Comment(s.into()),
         };
         self.0.push(re);
         Ok(())
@@ -72,15 +77,15 @@ impl EventWriter for ListWriter {
 }
 
 pub struct Options {
-  pub include_schema_location: bool
+    pub include_schema_location: bool,
 }
 
 impl Default for Options {
-  fn default() -> Self {
-    Self {
-      include_schema_location: true
+    fn default() -> Self {
+        Self {
+            include_schema_location: true,
+        }
     }
-  }
 }
 
 /// Serialise serde item to XML
@@ -88,8 +93,8 @@ impl Default for Options {
 /// # Arguments
 /// * `value` - The value to be serialised
 pub fn to_string<T>(value: &T) -> Result<String, crate::Error>
-    where
-        T: Serialize,
+where
+    T: Serialize,
 {
     to_string_custom(value, Options::default())
 }
@@ -100,8 +105,8 @@ pub fn to_string<T>(value: &T) -> Result<String, crate::Error>
 /// * `value` - The value to be serialised
 /// * `options` - Custom options for the serializer
 pub fn to_string_custom<T>(value: &T, options: Options) -> Result<String, crate::Error>
-    where
-        T: Serialize,
+where
+    T: Serialize,
 {
     let mut conf = xml::writer::EmitterConfig::new()
         .perform_indent(true)
@@ -130,8 +135,8 @@ pub fn to_string_custom<T>(value: &T, options: Options) -> Result<String, crate:
 /// # Arguments
 /// * `value` - The value to be serialised
 pub fn to_events<T>(value: &T) -> Result<Vec<xml::reader::XmlEvent>, crate::Error>
-    where
-        T: Serialize,
+where
+    T: Serialize,
 {
     to_events_custom(value, Options::default())
 }
@@ -141,9 +146,12 @@ pub fn to_events<T>(value: &T) -> Result<Vec<xml::reader::XmlEvent>, crate::Erro
 /// # Arguments
 /// * `value` - The value to be serialised
 /// * `options` - Custom options for the serializer
-pub fn to_events_custom<T>(value: &T, options: Options) -> Result<Vec<xml::reader::XmlEvent>, crate::Error>
-    where
-        T: Serialize,
+pub fn to_events_custom<T>(
+    value: &T,
+    options: Options,
+) -> Result<Vec<xml::reader::XmlEvent>, crate::Error>
+where
+    T: Serialize,
 {
     let mut writer = ListWriter(vec![]);
     let mut serializer = Serializer;
@@ -162,7 +170,10 @@ pub enum _SerializerData {
     CData(String),
     String(String),
     Seq(Vec<_SerializerData>),
-    Struct { attrs: Vec<(Cow<'static, str>, String)>, contents: Vec<(Cow<'static, str>, _SerializerData)> },
+    Struct {
+        attrs: Vec<(Cow<'static, str>, String)>,
+        contents: Vec<(Cow<'static, str>, _SerializerData)>,
+    },
 }
 
 impl _SerializerData {
@@ -171,7 +182,11 @@ impl _SerializerData {
             _SerializerData::CData(s) => s.clone(),
             _SerializerData::String(s) => s.clone(),
             _SerializerData::Seq(s) => s.iter().map(|d| d.as_str()).collect::<Vec<_>>().join(","),
-            _SerializerData::Struct { contents, .. } => contents.iter().map(|(_, d)| d.as_str()).collect::<Vec<_>>().join(","),
+            _SerializerData::Struct { contents, .. } => contents
+                .iter()
+                .map(|(_, d)| d.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
         }
     }
 }
@@ -182,18 +197,22 @@ struct _SerializerState {
     include_schema_location: bool,
 }
 
-fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mut _SerializerState) -> Result<(), crate::Error> {
+fn format_data<W: EventWriter>(
+    writer: &mut W,
+    val: &_SerializerData,
+    state: &mut _SerializerState,
+) -> Result<(), crate::Error> {
     match val {
         _SerializerData::CData(s) => {
             writer.write(xml::writer::XmlEvent::cdata(&match state.raw_output {
                 true => s.to_string(),
-                false => xml::escape::escape_str_pcdata(s).to_string()
+                false => xml::escape::escape_str_pcdata(s).to_string(),
             }))?
         }
         _SerializerData::String(s) => {
             writer.write(xml::writer::XmlEvent::characters(&match state.raw_output {
                 true => s.to_string(),
-                false => xml::escape::escape_str_pcdata(s).to_string()
+                false => xml::escape::escape_str_pcdata(s).to_string(),
             }))?
         }
         _SerializerData::Seq(s) => {
@@ -201,10 +220,7 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                 format_data(writer, &d, state)?;
             }
         }
-        _SerializerData::Struct {
-            contents,
-            ..
-        } => {
+        _SerializerData::Struct { contents, .. } => {
             for (tag, d) in contents {
                 if *tag == "$valueRaw" {
                     let old_val = state.raw_output;
@@ -218,32 +234,33 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                     let base_name = parsed_tag.e;
                     let name = match parsed_tag.p {
                         Some(p) => format!("{}:{}", p, base_name),
-                        None => base_name.to_string()
+                        None => base_name.to_string(),
                     };
 
                     match d {
                         _SerializerData::Seq(s) => {
                             for d in s {
                                 let attrs = match d {
-                                    _SerializerData::Struct {
-                                        attrs,
-                                        ..
-                                    } => attrs.to_owned(),
-                                    _ => vec![]
+                                    _SerializerData::Struct { attrs, .. } => attrs.to_owned(),
+                                    _ => vec![],
                                 };
-                                let attrs = attrs.iter().map(|(attr_k, attr_v)| {
-                                    (xml::name::Name::from(Tag::from_cow(attr_k)), attr_v)
-                                }).collect::<Vec<_>>();
+                                let attrs = attrs
+                                    .iter()
+                                    .map(|(attr_k, attr_v)| {
+                                        (xml::name::Name::from(Tag::from_cow(attr_k)), attr_v)
+                                    })
+                                    .collect::<Vec<_>>();
                                 let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
                                 if state.include_schema_location {
-                                    elm = elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
+                                    elm =
+                                        elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
                                 }
                                 let mut loc = String::new();
                                 let mut should_pop = false;
                                 if let Some(n) = parsed_tag.n {
                                     match parsed_tag.p {
                                         Some(p) => elm = elm.ns(p, n),
-                                        None => elm = elm.default_ns(n)
+                                        None => elm = elm.default_ns(n),
                                     };
                                     if !state.ns_stack.iter().any(|ns| ns == n) {
                                         if let Some(l) = parsed_tag.l {
@@ -255,11 +272,14 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                                             loc.push_str(&format!("{} {}.xsd", n, last_n));
                                         }
                                         if state.include_schema_location && !loc.is_empty() {
-                                            elm = elm.attr(xml::name::Name {
-                                                namespace: None,
-                                                local_name: "schemaLocation",
-                                                prefix: Some("xsi"),
-                                            }, &loc);
+                                            elm = elm.attr(
+                                                xml::name::Name {
+                                                    namespace: None,
+                                                    local_name: "schemaLocation",
+                                                    prefix: Some("xsi"),
+                                                },
+                                                &loc,
+                                            );
                                         }
                                         state.ns_stack.push(n.to_string());
                                         should_pop = true;
@@ -279,15 +299,15 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                         }
                         d => {
                             let attrs = match d {
-                                _SerializerData::Struct {
-                                    attrs,
-                                    ..
-                                } => attrs.to_owned(),
-                                _ => vec![]
+                                _SerializerData::Struct { attrs, .. } => attrs.to_owned(),
+                                _ => vec![],
                             };
-                            let attrs = attrs.iter().map(|(attr_k, attr_v)| {
-                                (xml::name::Name::from(Tag::from_cow(attr_k)), attr_v)
-                            }).collect::<Vec<_>>();
+                            let attrs = attrs
+                                .iter()
+                                .map(|(attr_k, attr_v)| {
+                                    (xml::name::Name::from(Tag::from_cow(attr_k)), attr_v)
+                                })
+                                .collect::<Vec<_>>();
 
                             let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
                             if state.include_schema_location {
@@ -298,7 +318,7 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                             if let Some(n) = parsed_tag.n {
                                 match parsed_tag.p {
                                     Some(p) => elm = elm.ns(p, n),
-                                    None => elm = elm.default_ns(n)
+                                    None => elm = elm.default_ns(n),
                                 };
                                 if !state.ns_stack.iter().any(|ns| ns == n) {
                                     if let Some(l) = parsed_tag.l {
@@ -310,11 +330,14 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
                                         loc.push_str(&format!("{} {}.xsd", n, last_n));
                                     }
                                     if state.include_schema_location && !loc.is_empty() {
-                                        elm = elm.attr(xml::name::Name {
-                                            namespace: None,
-                                            local_name: "schemaLocation",
-                                            prefix: Some("xsi"),
-                                        }, &loc);
+                                        elm = elm.attr(
+                                            xml::name::Name {
+                                                namespace: None,
+                                                local_name: "schemaLocation",
+                                                prefix: Some("xsi"),
+                                            },
+                                            &loc,
+                                        );
                                     }
                                     state.ns_stack.push(n.to_string());
                                     should_pop = true;
@@ -344,7 +367,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     type Error = crate::Error;
     type SerializeSeq = SeqSerializer<'a>;
     type SerializeTuple = SeqSerializer<'a>;
-    type SerializeTupleStruct = SeqSerializer<'a, >;
+    type SerializeTupleStruct = SeqSerializer<'a>;
     type SerializeTupleVariant = SeqSerializer<'a>;
     type SerializeMap = MapSerializer<'a>;
     type SerializeStruct = StructSerializer<'a>;
@@ -412,8 +435,8 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_some<T>(self, value: &T) -> Result<_SerializerData, Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         value.serialize(self)
     }
@@ -440,8 +463,8 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         _name: &'static str,
         value: &T,
     ) -> Result<_SerializerData, Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         value.serialize(self)
     }
@@ -453,8 +476,8 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         variant: &'static str,
         value: &T,
     ) -> Result<_SerializerData, Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         let value = value.serialize(&mut *self)?;
         Ok(_SerializerData::Struct {
@@ -538,8 +561,8 @@ impl<'a> ser::SerializeSeq for SeqSerializer<'a> {
     type Error = crate::Error;
 
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         let val = value.serialize(&mut *self.parent)?;
         self.output.push(val);
@@ -556,8 +579,8 @@ impl<'a> ser::SerializeTuple for SeqSerializer<'a> {
     type Error = crate::Error;
 
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         let val = value.serialize(&mut *self.parent)?;
         self.output.push(val);
@@ -574,8 +597,8 @@ impl<'a> ser::SerializeTupleStruct for SeqSerializer<'a> {
     type Error = crate::Error;
 
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         let val = value.serialize(&mut *self.parent)?;
         self.output.push(val);
@@ -592,8 +615,8 @@ impl<'a> ser::SerializeTupleVariant for SeqSerializer<'a> {
     type Error = crate::Error;
 
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         let val = value.serialize(&mut *self.parent)?;
         self.output.push(val);
@@ -616,8 +639,8 @@ impl<'a> ser::SerializeMap for MapSerializer<'a> {
     type Error = crate::Error;
 
     fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         let val = key.serialize(&mut *self.parent)?;
         self.cur_key = val.as_str();
@@ -625,8 +648,8 @@ impl<'a> ser::SerializeMap for MapSerializer<'a> {
     }
 
     fn serialize_value<T>(&mut self, value: &T) -> Result<(), Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         let val = value.serialize(&mut *self.parent)?;
         self.keys.push((self.cur_key.clone().into(), val));
@@ -636,7 +659,11 @@ impl<'a> ser::SerializeMap for MapSerializer<'a> {
     fn end(self) -> Result<_SerializerData, Self::Error> {
         Ok(_SerializerData::Struct {
             attrs: vec![],
-            contents: self.keys.into_iter().map(|(k,v)| (Cow::from(k), v)).collect(),
+            contents: self
+                .keys
+                .into_iter()
+                .map(|(k, v)| (Cow::from(k), v))
+                .collect(),
         })
     }
 }
@@ -652,8 +679,8 @@ impl<'a> ser::SerializeStruct for StructSerializer<'a> {
     type Error = crate::Error;
 
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         let val = value.serialize(&mut *self.parent)?;
         if key.starts_with("$attr:") {
@@ -666,8 +693,8 @@ impl<'a> ser::SerializeStruct for StructSerializer<'a> {
 
     fn end(self) -> Result<_SerializerData, Self::Error> {
         Ok(_SerializerData::Struct {
-            attrs: self.attrs.into_iter().map(|(k,v)| (k.into(), v)).collect(),
-            contents: self.keys.into_iter().map(|(k,v)| (k.into(), v)).collect(),
+            attrs: self.attrs.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+            contents: self.keys.into_iter().map(|(k, v)| (k.into(), v)).collect(),
         })
     }
 }
@@ -684,8 +711,8 @@ impl<'a> ser::SerializeStructVariant for StructVariantSerializer<'a> {
     type Error = crate::Error;
 
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
-        where
-            T: ?Sized + Serialize,
+    where
+        T: ?Sized + Serialize,
     {
         let val = value.serialize(&mut *self.parent)?;
         if key.starts_with("$attr:") {
@@ -699,10 +726,13 @@ impl<'a> ser::SerializeStructVariant for StructVariantSerializer<'a> {
     fn end(self) -> Result<_SerializerData, Self::Error> {
         Ok(_SerializerData::Struct {
             attrs: vec![],
-            contents: vec![(self.tag.into(), _SerializerData::Struct {
-                attrs: self.attrs,
-                contents: self.keys,
-            })],
+            contents: vec![(
+                self.tag.into(),
+                _SerializerData::Struct {
+                    attrs: self.attrs,
+                    contents: self.keys,
+                },
+            )],
         })
     }
 }
