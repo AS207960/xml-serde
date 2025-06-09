@@ -240,119 +240,11 @@ fn format_data<W: EventWriter>(
                     match d {
                         _SerializerData::Seq(s) => {
                             for d in s {
-                                let attrs = match d {
-                                    _SerializerData::Struct { attrs, .. } => attrs.to_owned(),
-                                    _ => vec![],
-                                };
-                                let attrs = attrs
-                                    .iter()
-                                    .map(|(attr_k, attr_v)| {
-                                        (xml::name::Name::from(Tag::from_cow(attr_k)), attr_v)
-                                    })
-                                    .collect::<Vec<_>>();
-                                let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
-                                if state.include_schema_location {
-                                    elm =
-                                        elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
-                                }
-                                let mut loc = String::new();
-                                let mut should_pop = false;
-                                if let Some(n) = parsed_tag.n {
-                                    match parsed_tag.p {
-                                        Some(p) => elm = elm.ns(p, n),
-                                        None => elm = elm.default_ns(n),
-                                    };
-                                    if !state.ns_stack.iter().any(|ns| ns == n) {
-                                        if let Some(l) = parsed_tag.l {
-                                            if !l.is_empty() {
-                                                loc.push_str(&format!("{} {}", n, l));
-                                            }
-                                        } else {
-                                            let last_n = n.rsplit(':').next().unwrap();
-                                            loc.push_str(&format!("{} {}.xsd", n, last_n));
-                                        }
-                                        if state.include_schema_location && !loc.is_empty() {
-                                            elm = elm.attr(
-                                                xml::name::Name {
-                                                    namespace: None,
-                                                    local_name: "schemaLocation",
-                                                    prefix: Some("xsi"),
-                                                },
-                                                &loc,
-                                            );
-                                        }
-                                        state.ns_stack.push(n.to_string());
-                                        should_pop = true;
-                                    }
-                                }
-                                for (name, attr_v) in attrs.clone() {
-                                    elm = elm.attr(name, attr_v);
-                                }
-
-                                writer.write(elm)?;
-                                format_data(writer, &d, state)?;
-                                writer.write(xml::writer::XmlEvent::end_element())?;
-                                if should_pop {
-                                    state.ns_stack.pop();
-                                }
+                                format_data_inner(writer, state, parsed_tag, &name, d)?;
                             }
                         }
                         d => {
-                            let attrs = match d {
-                                _SerializerData::Struct { attrs, .. } => attrs.to_owned(),
-                                _ => vec![],
-                            };
-                            let attrs = attrs
-                                .iter()
-                                .map(|(attr_k, attr_v)| {
-                                    (xml::name::Name::from(Tag::from_cow(attr_k)), attr_v)
-                                })
-                                .collect::<Vec<_>>();
-
-                            let mut elm = xml::writer::XmlEvent::start_element(name.as_str());
-                            if state.include_schema_location {
-                                elm = elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
-                            }
-                            let mut loc = String::new();
-                            let mut should_pop = false;
-                            if let Some(n) = parsed_tag.n {
-                                match parsed_tag.p {
-                                    Some(p) => elm = elm.ns(p, n),
-                                    None => elm = elm.default_ns(n),
-                                };
-                                if !state.ns_stack.iter().any(|ns| ns == n) {
-                                    if let Some(l) = parsed_tag.l {
-                                        if !l.is_empty() {
-                                            loc.push_str(&format!("{} {}", n, l));
-                                        }
-                                    } else {
-                                        let last_n = n.rsplit(':').next().unwrap();
-                                        loc.push_str(&format!("{} {}.xsd", n, last_n));
-                                    }
-                                    if state.include_schema_location && !loc.is_empty() {
-                                        elm = elm.attr(
-                                            xml::name::Name {
-                                                namespace: None,
-                                                local_name: "schemaLocation",
-                                                prefix: Some("xsi"),
-                                            },
-                                            &loc,
-                                        );
-                                    }
-                                    state.ns_stack.push(n.to_string());
-                                    should_pop = true;
-                                }
-                            }
-                            for (name, attr_v) in attrs {
-                                elm = elm.attr(name, attr_v);
-                            }
-
-                            writer.write(elm)?;
-                            format_data(writer, &d, state)?;
-                            writer.write(xml::writer::XmlEvent::end_element())?;
-                            if should_pop {
-                                state.ns_stack.pop();
-                            }
+                            format_data_inner(writer, state, parsed_tag, &name, d)?;
                         }
                     };
                 }
@@ -360,6 +252,66 @@ fn format_data<W: EventWriter>(
         }
     }
     Ok(())
+}
+
+fn format_data_inner<W: EventWriter>(
+    writer: &mut W,
+    state: &mut _SerializerState,
+    parsed_tag: Tag<'_>,
+    name: &str,
+    d: &_SerializerData,
+) -> Result<(), crate::Error> {
+    let attrs = match d {
+        _SerializerData::Struct { attrs, .. } => attrs.to_owned(),
+        _ => vec![],
+    };
+    let attrs = attrs
+        .iter()
+        .map(|(attr_k, attr_v)| (xml::name::Name::from(Tag::from_cow(attr_k)), attr_v))
+        .collect::<Vec<_>>();
+    let mut elm = xml::writer::XmlEvent::start_element(name);
+    if state.include_schema_location {
+        elm = elm.ns("xsi", "http://www.w3.org/2001/XMLSchema-instance");
+    }
+    let mut loc = String::new();
+    let mut should_pop = false;
+    if let Some(n) = parsed_tag.n {
+        match parsed_tag.p {
+            Some(p) => elm = elm.ns(p, n),
+            None => elm = elm.default_ns(n),
+        };
+        if !state.ns_stack.iter().any(|ns| ns == n) {
+            if let Some(l) = parsed_tag.l {
+                if !l.is_empty() {
+                    loc.push_str(&format!("{} {}", n, l));
+                }
+            } else {
+                let last_n = n.rsplit(':').next().unwrap();
+                loc.push_str(&format!("{} {}.xsd", n, last_n));
+            }
+            if state.include_schema_location && !loc.is_empty() {
+                elm = elm.attr(
+                    xml::name::Name {
+                        namespace: None,
+                        local_name: "schemaLocation",
+                        prefix: Some("xsi"),
+                    },
+                    &loc,
+                );
+            }
+            state.ns_stack.push(n.to_string());
+            should_pop = true;
+        }
+    }
+    for (name, attr_v) in attrs {
+        elm = elm.attr(name, attr_v);
+    }
+    writer.write(elm)?;
+    format_data(writer, &d, state)?;
+    writer.write(xml::writer::XmlEvent::end_element())?;
+    Ok(if should_pop {
+        state.ns_stack.pop();
+    })
 }
 
 impl<'a> ser::Serializer for &'a mut Serializer {
