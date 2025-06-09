@@ -105,4 +105,27 @@ mod tests {
             .unwrap(),
         );
     }
+
+    #[test]
+    fn decode() {
+        assert_eq!(
+            EPPMessage {
+                message: EPPMessageType::Command(EPPCommand {
+                    command: "&".to_string(),
+                    client_transaction_id: Some("&".to_string()),
+                }),
+            },
+            super::de::from_str(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
+  <command>
+    <EPPCommand>&<clTRID>&amp;</clTRID>
+    </EPPCommand>
+  </command>
+</epp>
+"#,
+            )
+            .unwrap(),
+        );
+    }
 }
