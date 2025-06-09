@@ -1026,8 +1026,7 @@ mod tests {
 
         assert_eq!(
             crate::from_str::<Foo>(
-                r#"
-<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+                r#"<?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <foo:bar xmlns:foo="urn:foo">baz</foo:bar>
             "#
             )
@@ -1048,8 +1047,7 @@ mod tests {
 
         assert_eq!(
             crate::from_str::<Foo>(
-                r#"
-<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+                r#"<?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <?xml-stylesheet href='foo.xsl' type='text/xsl'?>
 <foo:bar xmlns:foo="urn:foo">baz</foo:bar>
             "#
