@@ -18,8 +18,10 @@ pub use ser::{to_events, to_events_custom, to_string, to_string_custom, Options,
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
+    #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}epp")]
     pub enum EPPMessageType {
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}hello", skip_deserializing)]
         Hello {},
@@ -31,13 +33,13 @@ mod tests {
         // Response(EPPResponse),
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
+    #[serde(transparent)]
     pub struct EPPMessage {
-        #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}epp")]
         pub message: EPPMessageType,
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
     pub struct EPPCommand {
         #[serde(rename = "$valueRaw")]
         pub command: String,
@@ -48,13 +50,13 @@ mod tests {
         pub client_transaction_id: Option<String>,
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
     pub enum EPPCommandType {
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}login")]
         Login(EPPLogin),
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
     pub struct EPPLogin {
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}clID")]
         pub client_id: String,
@@ -70,14 +72,14 @@ mod tests {
         pub services: EPPLoginServices,
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
     pub struct EPPLoginOptions {
         pub version: String,
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}lang")]
         pub language: String,
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
     pub struct EPPLoginServices {
         #[serde(rename = "{urn:ietf:params:xml:ns:epp-1.0}objURI")]
         pub objects: Vec<String>,
@@ -85,16 +87,22 @@ mod tests {
 
     #[test]
     fn encode() {
-        pretty_env_logger::init();
-        println!(
-            "{:?}",
+        assert_eq!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:ietf:params:xml:ns:epp-1.0 epp-1.0.xsd">
+  <command>
+    <EPPCommand>&<clTRID>&amp;</clTRID>
+    </EPPCommand>
+  </command>
+</epp>"#
+            .to_string(),
             super::ser::to_string(&EPPMessage {
                 message: EPPMessageType::Command(EPPCommand {
                     command: "&".to_string(),
                     client_transaction_id: Some("&".to_string()),
-                })
+                }),
             })
-            .unwrap()
+            .unwrap(),
         );
     }
 }

@@ -173,6 +173,7 @@ pub enum _SerializerData {
     Struct {
         attrs: Vec<(Cow<'static, str>, String)>,
         contents: Vec<(Cow<'static, str>, _SerializerData)>,
+        name: &'static str,
     },
 }
 
@@ -182,11 +183,14 @@ impl _SerializerData {
             _SerializerData::CData(s) => s.clone(),
             _SerializerData::String(s) => s.clone(),
             _SerializerData::Seq(s) => s.iter().map(|d| d.as_str()).collect::<Vec<_>>().join(","),
-            _SerializerData::Struct { contents, .. } => contents
-                .iter()
-                .map(|(_, d)| d.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
+            _SerializerData::Struct { name, contents, .. } => format!(
+                "<{name}>{}</{name}>",
+                contents
+                    .iter()
+                    .map(|(_, d)| d.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
         }
     }
 }
@@ -220,7 +224,16 @@ fn format_data<W: EventWriter>(
                 format_data(writer, &d, state)?;
             }
         }
-        _SerializerData::Struct { contents, .. } => {
+        _SerializerData::Struct {
+            contents,
+            name,
+            attrs,
+            ..
+        } => {
+            let name_cow = Cow::Borrowed(*name);
+            let (parsed_tag, name) = parse_tag(&name_cow);
+            let should_pop = make_element(writer, state, parsed_tag, &name, &attrs)?;
+
             for (tag, d) in contents {
                 if *tag == "$valueRaw" {
                     let old_val = state.raw_output;
@@ -230,31 +243,41 @@ fn format_data<W: EventWriter>(
                 } else if tag.starts_with(&"$value") {
                     format_data(writer, &d, state)?;
                 } else {
-                    let parsed_tag = Tag::from_cow(&tag);
-                    let base_name = parsed_tag.e;
-                    let name = match parsed_tag.p {
-                        Some(p) => format!("{}:{}", p, base_name),
-                        None => base_name.to_string(),
-                    };
+                    let (parsed_tag, name) = parse_tag(tag);
 
                     match d {
                         _SerializerData::Seq(s) => {
                             for d in s {
-                                format_data_inner(writer, state, parsed_tag, &name, d)?;
+                                format_data_field(writer, state, parsed_tag, &name, d)?;
                             }
                         }
                         d => {
-                            format_data_inner(writer, state, parsed_tag, &name, d)?;
+                            format_data_field(writer, state, parsed_tag, &name, d)?;
                         }
                     };
                 }
+            }
+
+            writer.write(xml::writer::XmlEvent::end_element())?;
+            if should_pop {
+                state.ns_stack.pop();
             }
         }
     }
     Ok(())
 }
 
-fn format_data_inner<W: EventWriter>(
+fn parse_tag<'a>(tag: &'a Cow<'static, str>) -> (Tag<'a>, String) {
+    let parsed_tag = Tag::from_cow(&tag);
+    let base_name = parsed_tag.e;
+    let name = match parsed_tag.p {
+        Some(p) => format!("{}:{}", p, base_name),
+        None => base_name.to_string(),
+    };
+    (parsed_tag, name)
+}
+
+fn format_data_field<W: EventWriter>(
     writer: &mut W,
     state: &mut _SerializerState,
     parsed_tag: Tag<'_>,
@@ -262,9 +285,24 @@ fn format_data_inner<W: EventWriter>(
     d: &_SerializerData,
 ) -> Result<(), crate::Error> {
     let attrs = match d {
-        _SerializerData::Struct { attrs, .. } => attrs.to_owned(),
-        _ => vec![],
+        _SerializerData::Struct { attrs, .. } => attrs,
+        _ => [].as_slice(),
     };
+    let should_pop = make_element(writer, state, parsed_tag, name, attrs)?;
+    format_data(writer, &d, state)?;
+    writer.write(xml::writer::XmlEvent::end_element())?;
+    Ok(if should_pop {
+        state.ns_stack.pop();
+    })
+}
+
+fn make_element<W: EventWriter>(
+    writer: &mut W,
+    state: &mut _SerializerState,
+    parsed_tag: Tag,
+    name: &str,
+    attrs: &[(Cow<'static, str>, String)],
+) -> xml::writer::Result<bool> {
     let attrs = attrs
         .iter()
         .map(|(attr_k, attr_v)| (xml::name::Name::from(Tag::from_cow(attr_k)), attr_v))
@@ -306,12 +344,10 @@ fn format_data_inner<W: EventWriter>(
     for (name, attr_v) in attrs {
         elm = elm.attr(name, attr_v);
     }
+
     writer.write(elm)?;
-    format_data(writer, &d, state)?;
-    writer.write(xml::writer::XmlEvent::end_element())?;
-    Ok(if should_pop {
-        state.ns_stack.pop();
-    })
+
+    Ok(should_pop)
 }
 
 impl<'a> ser::Serializer for &'a mut Serializer {
@@ -423,7 +459,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     fn serialize_newtype_variant<T>(
         self,
-        _name: &'static str,
+        name: &'static str,
         _variant_index: u32,
         variant: &'static str,
         value: &T,
@@ -433,6 +469,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     {
         let value = value.serialize(&mut *self)?;
         Ok(_SerializerData::Struct {
+            name,
             attrs: vec![],
             contents: vec![(variant.into(), value)],
         })
@@ -477,11 +514,12 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     fn serialize_struct(
         self,
-        _name: &'static str,
+        name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
         Ok(StructSerializer {
             parent: self,
+            name: dbg!(name),
             attrs: vec![],
             keys: vec![],
         })
@@ -489,12 +527,13 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     fn serialize_struct_variant(
         self,
-        _name: &'static str,
+        name: &'static str,
         _variant_index: u32,
         variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         Ok(StructVariantSerializer {
+            name,
             parent: self,
             attrs: vec![],
             keys: vec![],
@@ -610,6 +649,8 @@ impl<'a> ser::SerializeMap for MapSerializer<'a> {
 
     fn end(self) -> Result<_SerializerData, Self::Error> {
         Ok(_SerializerData::Struct {
+            // todo: create separate variant since map has no name
+            name: "::map",
             attrs: vec![],
             contents: self
                 .keys
@@ -624,6 +665,7 @@ pub struct StructSerializer<'a> {
     parent: &'a mut Serializer,
     attrs: Vec<(&'static str, String)>,
     keys: Vec<(&'static str, _SerializerData)>,
+    name: &'static str,
 }
 
 impl<'a> ser::SerializeStruct for StructSerializer<'a> {
@@ -645,6 +687,7 @@ impl<'a> ser::SerializeStruct for StructSerializer<'a> {
 
     fn end(self) -> Result<_SerializerData, Self::Error> {
         Ok(_SerializerData::Struct {
+            name: self.name,
             attrs: self.attrs.into_iter().map(|(k, v)| (k.into(), v)).collect(),
             contents: self.keys.into_iter().map(|(k, v)| (k.into(), v)).collect(),
         })
@@ -652,6 +695,7 @@ impl<'a> ser::SerializeStruct for StructSerializer<'a> {
 }
 
 pub struct StructVariantSerializer<'a> {
+    name: &'static str,
     parent: &'a mut Serializer,
     attrs: Vec<(Cow<'static, str>, String)>,
     keys: Vec<(Cow<'static, str>, _SerializerData)>,
@@ -677,10 +721,14 @@ impl<'a> ser::SerializeStructVariant for StructVariantSerializer<'a> {
 
     fn end(self) -> Result<_SerializerData, Self::Error> {
         Ok(_SerializerData::Struct {
+            // todo: change this
+            name: self.name,
             attrs: vec![],
             contents: vec![(
                 self.tag.into(),
                 _SerializerData::Struct {
+                    // todo: change this
+                    name: self.name,
                     attrs: self.attrs,
                     contents: self.keys,
                 },
