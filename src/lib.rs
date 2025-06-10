@@ -109,6 +109,7 @@ mod tests {
 
     #[test]
     fn decode() {
+        pretty_env_logger::init();
         assert_eq!(
             EPPMessage {
                 message: EPPMessageType::Command(EPPCommand {
