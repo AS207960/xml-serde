@@ -271,7 +271,7 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
 
                                 writer.write(elm)?;
                                 format_data(writer, &d, state)?;
-                                writer.write(xml::writer::XmlEvent::end_element())?;
+                                writer.write(xml::writer::XmlEvent::end_element().name(name.as_str()))?;
                                 if should_pop {
                                     state.ns_stack.pop();
                                 }
@@ -326,7 +326,7 @@ fn format_data<W: EventWriter>(writer: &mut W, val: &_SerializerData, state: &mu
 
                             writer.write(elm)?;
                             format_data(writer, &d, state)?;
-                            writer.write(xml::writer::XmlEvent::end_element())?;
+                            writer.write(xml::writer::XmlEvent::end_element().name(name.as_str()))?;
                             if should_pop {
                                 state.ns_stack.pop();
                             }
